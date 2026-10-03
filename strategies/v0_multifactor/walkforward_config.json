@@ -1,0 +1,31 @@
+{
+  "history_start": "2004-01-01",
+  "fold_years": [2010, 2011, 2012, 2013, 2014, 2015],
+  "horizons": [126, 250],
+  "label_clip": 0.05,
+  "purge_days": 260,
+  "smoothing_span": 5,
+  "params": {
+    "seeds": [0, 1, 2],
+    "model_weight": 0.5,
+    "block_weights": {
+      "size": 1.0,
+      "value": 0.5,
+      "quality": 0.5,
+      "lowrisk": 0.3
+    },
+    "model_params": {
+      "objective": "regression",
+      "n_estimators": 350,
+      "learning_rate": 0.03,
+      "num_leaves": 31,
+      "min_child_samples": 300,
+      "subsample": 0.8,
+      "subsample_freq": 1,
+      "colsample_bytree": 0.7,
+      "reg_lambda": 1.0,
+      "max_bin": 127,
+      "verbose": -1
+    }
+  }
+}

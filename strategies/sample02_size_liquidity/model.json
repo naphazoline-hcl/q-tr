@@ -1,0 +1,16 @@
+{
+  "model": "sklearn.linear_model.Ridge",
+  "alpha": 1.0,
+  "feature_names": [
+    "size",
+    "illiq"
+  ],
+  "coef": [
+    0.0002678758658434751,
+    0.00010935009028393029
+  ],
+  "intercept": 0.0003072750265279932,
+  "training_rows": 804043,
+  "training_from": "2008-11-04",
+  "training_to": "2016-03-31"
+}

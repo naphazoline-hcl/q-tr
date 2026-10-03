@@ -1,0 +1,157 @@
+{
+  "as_of": "2026-07-31",
+  "files": {
+    "listed_info_train.parquet": {
+      "size": 160096394,
+      "sha256": "8654e3072ddc33da28ea925f2d6ec0cae7c73356ceb27349f0d304aa956a9e76"
+    },
+    "listed_info_valid.parquet": {
+      "size": 319112134,
+      "sha256": "8598b1b3534c33996ff60fc2c101cee293a4ce5b4c23dc5590b4e8bce372ade7"
+    },
+    "prices_daily_quotes_train.parquet": {
+      "size": 67581025,
+      "sha256": "9b29e69925660d376e6d30c70d3a8db8379f414745898aed8b864634dd7686a5"
+    },
+    "prices_daily_quotes_valid.parquet": {
+      "size": 108493645,
+      "sha256": "2483fa5fcd4d1fbac032ae779e8a26186297862ba75be6a7b41b1c8bbfc99c05"
+    },
+    "fins_statements_train.parquet": {
+      "size": 2149453,
+      "sha256": "9ea128c62be97316f7bcc3f6ec9b0e38953901ac0c1ad3268e91bfb436670cd6"
+    },
+    "fins_statements_valid.parquet": {
+      "size": 3295032,
+      "sha256": "a854bf4e59109f400d6ef4cd17c3ffb41404b457886f527bd6327f1df75b8607"
+    },
+    "topix_return_1day_train.parquet": {
+      "size": 34985,
+      "sha256": "1b680ff903c6ee42ec5812a78ad46314273e4c9caffbf729a6c247b22a0047d4"
+    },
+    "topix_return_1day_valid.parquet": {
+      "size": 48694,
+      "sha256": "8cc4c53fd75bdda8f9491c0c094195403f69e14f755c5cb2e6fff5ed84ae28eb"
+    },
+    "beta_1day_train.parquet": {
+      "size": 7052253,
+      "sha256": "0294d5032f151bf28e06a2e890704a080c9aebb326673f864541892095167551"
+    },
+    "beta_1day_valid.parquet": {
+      "size": 11003668,
+      "sha256": "b186fc50d9ddcab59d283ea12eacd9f8893f826cc8aa340933d8ae1e77e656f9"
+    },
+    "raw_return_1day_train.parquet": {
+      "size": 5288031,
+      "sha256": "0cd61264af2f455cf3e177b5c0464b523c88f9a6123bc57bede7c6dcb7f1158c"
+    },
+    "raw_return_1day_valid.parquet": {
+      "size": 9689102,
+      "sha256": "02ac09a359d8e519691f980ce86dc8b6c7fb57cc0a7ca011302929cea1d1fed9"
+    },
+    "target_1day_train.parquet": {
+      "size": 7052149,
+      "sha256": "9b07dbf0942edd690a264ceef0626fb71ceceb633ba1d6ba2069da9f5f1aea16"
+    },
+    "target_1day_valid.parquet": {
+      "size": 10996240,
+      "sha256": "e91d4cbcebbd01d25e6028b5815a4d82cee733c8f521cfe487e3d8b09d82bd64"
+    },
+    "raw_target_1day_train.parquet": {
+      "size": 5291553,
+      "sha256": "171854e72873f55f9fc1df39b347f65c1bbf763afdde99236511c2534505f388"
+    },
+    "raw_target_1day_valid.parquet": {
+      "size": 9680191,
+      "sha256": "0da789973444d92a466a795411b9db921bcfb7972432576ed54aae6f2ab4b637"
+    },
+    "ecb_fx_rates_train.parquet": {
+      "size": 331727,
+      "sha256": "c82c6e39f40c8b713e7fc6828f0c42431180b5d6a90aae00e867dbbb825e6c3a"
+    },
+    "ecb_fx_rates_valid.parquet": {
+      "size": 449152,
+      "sha256": "2a0a1c20ce73ffb4ca2063ab22e81bc4d71389b3d13b9274c3bf4aca83189cff"
+    },
+    "consumer_attitude_index_train.parquet": {
+      "size": 21602,
+      "sha256": "b4cf9d6219c6e1ffaf1c8b9c1f60f09b0618b7733d5639652c144d2dfea4625e"
+    },
+    "consumer_attitude_index_valid.parquet": {
+      "size": 25291,
+      "sha256": "610ce281a5ec883f719674b6d7b9fe56fd51db2e5caa5e853f4595983e9f368d"
+    }
+  },
+  "not_in_grader": [
+    "raw_target_1day_train.parquet",
+    "raw_target_1day_valid.parquet"
+  ],
+  "public_features": {
+    "dataset_version": "stock-comp-public-features-2026-07-v1",
+    "builder": {
+      "path": "experiment/data_builder/build_public_features.py",
+      "sha256": "3ffd7f3c638a3979fb3319c0b4772e3f7f3c7219445d3e0504f768ae76c6cb2d"
+    },
+    "split_policy": {
+      "basis": "Date = first conservative availability timestamp in JST",
+      "train": "[2008-11-01T00:00:00+09:00, 2016-04-01T00:00:00+09:00)",
+      "valid": "[2016-04-01T00:00:00+09:00, 2026-08-01T00:00:00+09:00)"
+    },
+    "public_allowlist": {
+      "fx_pairs": [
+        "EUR/JPY",
+        "EUR/USD",
+        "USD/JPY"
+      ],
+      "consumer": {
+        "dataset": "consumer_confidence",
+        "series_code": "consumer_attitude_index",
+        "seasonal_adjustment": "original",
+        "value_vintage_kind": "as_published"
+      }
+    },
+    "sources": {
+      "fx": {
+        "organization": "European Central Bank",
+        "api": "https://data-api.ecb.europa.eu/service/data/EXR/D.USD+JPY.EUR.SP00.A",
+        "dataset": "https://data.ecb.europa.eu/data/datasets/EXR",
+        "transformation": "USD/JPY = EUR/JPY / EUR/USD, 9 decimal half-even"
+      },
+      "consumer_attitude_index": {
+        "organization": "Cabinet Office, Government of Japan",
+        "estat": "https://www.e-stat.go.jp/stat-search/files?toukei=00100405&tstat=000001014549",
+        "overview": "https://www.esri.cao.go.jp/jp/stat/shouhi/shouhi_gaiyou",
+        "publication_time_policy": "e-Stat supplies a date only; availability is conservatively set to 23:59:59 Asia/Tokyo"
+      }
+    },
+    "quality": {
+      "allowlist_violations": 0,
+      "pre_or_post_valid_rows": 0,
+      "duplicates": 0,
+      "null_or_nonfinite_core_values": 0,
+      "strict_v1_counts_checked": true
+    }
+  },
+  "listed_info": {
+    "dataset_version": "stock-comp-listed-info-pit-2026-07-v1",
+    "data_origin": "J-Quants Pro API v2 only",
+    "api_base": "https://api.jquants-pro.com/v2",
+    "endpoint": "/listed/info",
+    "request_method": "one authenticated GET per trading date with date=YYYY-MM-DD",
+    "total_dates": 4337,
+    "files": {
+      "listed_info_train.parquet": {
+        "rows": 5274692,
+        "trading_dates": 1814,
+        "min_date": "2008-11-04",
+        "max_date": "2016-03-31"
+      },
+      "listed_info_valid.parquet": {
+        "rows": 10415399,
+        "trading_dates": 2523,
+        "min_date": "2016-04-01",
+        "max_date": "2026-07-31"
+      }
+    }
+  }
+}

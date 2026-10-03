@@ -1,0 +1,25 @@
+# 配布データ・環境・学習済みモデルは公開しない（v0.app が取得できるのは公開 URL のみ）
+
+# 配布 parquet（約700MB）
+input/
+*.parquet
+
+# venv
+.venv/
+
+# 学習済みモデル（約11MB・再生成可能・他チームへの漏洩防止のため非公開）
+strategies/**/models/
+strategies/**/models_v2/
+strategies/**/*.txt
+!strategies/**/requirements*.txt
+
+# 提出 zip（ローカルで都度作成・コンペへ直接提出）
+strategies/*.zip
+
+# 実験ログ・中間成果物（巨大なものが多い）
+work/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.DS_Store
+._*
