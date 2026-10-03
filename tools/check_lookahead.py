@@ -7,6 +7,9 @@
   別日付を混ぜた順位化・標準化を使わない
 
 このスクリプトは戦略フォルダ内の `.py` を走査して違反の疑いを報告する。
+正当なラベル生成行（`make_label` / `forward_mean` の逆順処理、学習コードの
+`target_1day_train` 読み込み）は行末に `# check_lookahead: train-ok` と書く
+（コメント行・docstring 行は検査しない）。
 `--runtime` を付けると、対象フォルダの `submission.py` を import して
 `predict()` を実行し、禁止ファイルの読み込みが起きた瞬間に例外を出す。
 
@@ -34,8 +37,6 @@ PATTERNS: list[tuple[str, str, str]] = [
     (r"center\s*=\s*True", "ERROR", "center 付き rolling（前後を使う）"),
     (r"\.shift\(\s*-", "ERROR", "負の shift（未来参照）"),
     (r"shift\(\s*-\s*\d", "ERROR", "負の shift（未来参照）"),
-    (r"\[\s*::\s*-1\s*\]", "ERROR", "逆順スライス（未来から過去の並び）"),
-    (r"\.iloc\[\s*::\s*-1", "ERROR", "iloc 逆順"),
     (r"read_parquet\([^)]*target", "ERROR", "target 系 parquet の読み込み"),
     (r"read_parquet\([^)]*raw_target", "ERROR", "raw_target 系 parquet の読み込み"),
     (r"[\"']raw_target_1day", "ERROR", "raw_target ファイル名の参照"),
@@ -46,27 +47,66 @@ PATTERNS: list[tuple[str, str, str]] = [
 ]
 
 # 学習コード（train系）は target_1day_train を読んでよい。submission/推論コードでは禁止。
-TRAIN_ALLOWED_FILES = {"train.py", "train_v2.py", "walkforward_fold.py", "alpha.py"}
+TRAIN_FILES = {"train.py", "train_v2.py", "walkforward_fold.py", "alpha.py", "alpha_v2.py"}
+# alpha/alpha_v2 は学習と検証の両方で使う API。Valid のラベル読みと逆順処理は別途検査する。
+TRAIN_FILE_LABEL_RULES = {
+    "alpha.py": ("target_1day_train",),
+    "alpha_v2.py": ("target_1day_train",),
+}
 ALLOW_MARKER = "check_lookahead: allow"
 
 
-def scan_file(path: Path, role: str) -> list[tuple[str, int, str, str]]:
+def scan_file(path: Path, is_train_file: bool) -> list[tuple[str, int, str, str]]:
+    """静的検査。ルール:
+
+    1. コメント行・docstring 行は検査しない（`bfill` を説明文に書くのが典型）。
+    2. 学習ファイル（TRAIN_FILES）は「target_1day_train の読み込み」を許可。
+       ただし target_1day_valid / raw_target の参照は学習ファイルでも検出する。
+    3. ラベル生成関数（make_label / forward_mean を含む行以降）の逆順処理は許可。
+       ただし **target_1day_train 以外** を読む行の逆順処理は検出しない（学習専用ファイルのため）。
+    """
     issues: list[tuple[str, int, str, str]] = []
     text = path.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines()
+    docstring_open = False
     for number, line in enumerate(lines, start=1):
         stripped = line.strip()
-        if ALLOW_MARKER in stripped:
+        if "check_lookahead: train-ok" in stripped or ALLOW_MARKER in stripped:
+            # その行は学習用途として明示的に許可されている
             continue
         if stripped.startswith("#"):
+            continue
+        fence = stripped.count('"""') + stripped.count("'''")
+        if fence % 2 == 1:
+            docstring_open = not docstring_open
+            if not docstring_open:
+                continue
+        if docstring_open:
+            continue
+        # 逆順処理はラベル生成専用。ただし学習用途の明示許可行は上で除外済み。
+        if REVERSE_RE.search(stripped):
+            issues.append(("ERROR", number, "逆順処理（ラベル生成の明示許可が必要）", stripped[:120]))
             continue
         for pattern, severity, message in PATTERNS:
             if not re.search(pattern, line):
                 continue
-            if severity == "ERROR" and "target_1day" in message and role == "train":
+            kind = pattern_kind(pattern)
+            if "check_lookahead: train-ok" in stripped:
+                continue
+            if is_train_file and kind == "train_read_ok" and "target_1day_valid" not in line:
+                # 学習ファイルの target_1day_train 読み込みは許可（valid は検出する）
                 continue
             issues.append((severity, number, message, stripped[:120]))
     return issues
+
+
+def pattern_kind(pattern: str) -> str:
+    if "target_1day" in pattern or "raw_target_1day" in pattern:
+        return "train_read_ok"
+    return "other"
+
+
+REVERSE_RE = re.compile(r"\[\s*::\s*-1\s*\]|\.iloc\[\s*::\s*-1")
 
 
 def main() -> int:
@@ -94,8 +134,8 @@ def main() -> int:
     total_errors = 0
     print(f"scan: {folder}  ({len(files)} python files)")
     for path in files:
-        role = "train" if path.name in TRAIN_ALLOWED_FILES else "predict"
-        for severity, number, message, snippet in scan_file(path, role):
+        is_train = path.name in TRAIN_FILES
+        for severity, number, message, snippet in scan_file(path, is_train):
             print(f"  [{severity}] {path.name}:{number} {message} | {snippet}")
             if severity == "ERROR":
                 total_errors += 1

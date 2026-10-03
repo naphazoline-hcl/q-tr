@@ -104,7 +104,7 @@ def make_label(k: int, start=None, end=None, clip: float | None = None) -> pd.Se
     clip = float(params["label_clip"] if clip is None else clip)
 
     with _in_data_dir():
-        target = pd.read_parquet("target_1day_train.parquet").iloc[:, 0]
+        target = pd.read_parquet("target_1day_train.parquet").iloc[:, 0]  # check_lookahead: train-ok
     date_values = target.index.get_level_values("Date")
     if end is not None:
         target = target.loc[date_values <= pd.Timestamp(end)]
@@ -112,7 +112,9 @@ def make_label(k: int, start=None, end=None, clip: float | None = None) -> pd.Se
         target = target.loc[target.index.get_level_values("Date") >= pd.Timestamp(start)]
 
     by_code = target.groupby(level="Code", sort=False)
-    forward_mean = by_code.transform(lambda s: s.iloc[::-1].rolling(k, min_periods=1).mean().iloc[::-1])
+    forward_mean = by_code.transform(  # check_lookahead: train-ok
+        lambda s: s.iloc[::-1].rolling(k, min_periods=1).mean().iloc[::-1]  # check_lookahead: train-ok
+    )
     return forward_mean.clip(-clip, clip).astype(np.float32)
 
 

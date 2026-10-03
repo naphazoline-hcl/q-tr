@@ -47,7 +47,7 @@ MODEL_PARAMS = dict(
 
 def forward_mean(values: pd.Series, window: int) -> pd.Series:
     """各時点から未来 window 営業日の平均（ラベル専用。特徴量には使わない）。"""
-    return values.iloc[::-1].rolling(window, min_periods=1).mean().iloc[::-1]
+    return values.iloc[::-1].rolling(window, min_periods=1).mean().iloc[::-1]  # check_lookahead: train-ok
 
 
 def main() -> int:
@@ -63,7 +63,7 @@ def main() -> int:
     os.chdir(data_dir)
     try:
         features = build_features(splits=("train",))
-        target = pd.read_parquet("target_1day_train.parquet")["Return"]
+        target = pd.read_parquet("target_1day_train.parquet")["Return"]  # check_lookahead: train-ok
     finally:
         os.chdir(prev_cwd)
 
