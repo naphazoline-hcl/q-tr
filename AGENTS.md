@@ -12,7 +12,7 @@
   プロンプトと参照資料は GitHub 公開リポジトリ `naphazoline-hcl/q-tr` に置き、初回メッセージで URL を渡す。
   v0 は 1 セッション 1〜3 メッセージ、1 メッセージ 25 分、fast モード対応。
   v0 は入力データを持たない前提で、実行・計測はローカルで行う。
-- **環境**: `.venv`（Python 3.13 + 配布固定 5 パッケージ。配布要件は 3.11 だがバージョン同一のため等価）。
+- **環境**: `.venv`（Python 3.13 + 配布固定 5 パッケージ。配布要件は 3.11 だがバージョン同一のため等価。ただし lightgbm は実採点環境に合わせ **4.1.0**）。
 - **現状**: `strategies/v0_multifactor`（仮提出 robust_multifactor のコピー、Valid +0.754）が出発点。
 
 ## 2. ファイルマップ
@@ -34,7 +34,7 @@
 | `tools/make_zip.py` | 提出 zip 作成（create_zip.ipynb と同一ルール）+ zip で採点 |
 | `tools/progress.py` | Progress（JSONL + STATE.md）。長時間処理の共通規約 |
 | `strategies/v0_multifactor/` | v1 の全ファイル + `alpha.py`（walkforward API のラッパー）+ `walkforward_config.json` |
-| `requirements.txt` / `evaluate_script.py` / `input/` / `input_manifest.json` | 配布物（触らない） |
+| `requirements.txt` / `evaluate_script.py` / `input/` / `input_manifest.json` | 配布物（`evaluate_script.py` / `input/` / `input_manifest.json` は触らない。`requirements.txt` は lightgbm のみ実採点環境に合わせ 4.1.0 へ修正済み） |
 
 ## 3. 外部サービスの仕様（確定事項・再調査しないこと）
 
@@ -44,6 +44,9 @@
 - **GitHub 公開は仕様上避けられない**: ただし学習済みモデル（`.txt`、約11MB）や個人情報は push しない。
   `.gitignore` で除外。
 - **データの扱い**: `input/` は巨大（約700MB）かつ配布物なので push しない。v0 にはスキーマ資料だけ渡す。
+- **採点環境の lightgbm は 4.1.0**（配布 `requirements.txt` の 4.6.0 ではない。仮提出の作業で判明し、
+  配布 README の GPU 欄にも 4.1.0 と記載）。ローカルの venv・`requirements.txt` も 4.1.0 に統一済み。
+  モデルファイル形式 v4 は 4.1.0 / 4.6.0 で互換なので、既存の学習済みモデルはそのまま使える。
 
 ## 4. 絶対ルール（例外なし）
 
