@@ -84,12 +84,15 @@ def daily_metrics(pred: pd.DataFrame, target: pd.DataFrame) -> dict:
 def quantile_means(weight: pd.Series, target_series: pd.Series) -> dict:
     """5分位ごとの平均残差リターン（グロス・等ウェイト、bp/日）。
 
-    分位の割当は公式採点 compute_weight と同一（順位 → qcut(5)）。
+    分位の割当は公式採点 compute_weight と事実上同一（順位 → 5等分）。
+    公式の qcut と違い、ties が多い日でも破綻しないよう順位を5等分する。
     """
     frame = pd.DataFrame({"w": weight, "t": target_series}).dropna(subset=["t"])
-    frame["q"] = frame.groupby(level="Date")["w"].transform(lambda x: pd.qcut(x, 5, labels=False))
+    frame["rank"] = frame.groupby(level="Date")["w"].rank(method="first")
+    counts = frame.groupby(level="Date")["w"].transform("size")
+    frame["q"] = np.ceil(frame["rank"] / (counts / 5)).clip(1, 5).astype("int64")
     means = frame.groupby("q")["t"].mean() * 1e4
-    return {f"Q{int(q) + 1}": round(float(v), 2) for q, v in means.items()}
+    return {f"Q{int(q)}": round(float(v), 2) for q, v in means.items()}
 
 
 def ic_metrics(pred: pd.DataFrame, target: pd.DataFrame) -> dict:
