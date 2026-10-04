@@ -24,10 +24,10 @@
 | ファイル | 内容・状態 |
 | :--- | :--- |
 | `v0/計画.md` | v0.app 運用計画（制約対策・セッション順序・フィードバック・中断対策・実行ログ） |
-| `v0/prompts/P1〜P6*.md` | v0.app に投げる6つのプロンプト（日本語・自己完結・1セッション1成果物・§0.5 に作業規約を内蔵） |
-| `v0/prompts/P0_作業規約.md` | 全プロンプト共通の作業規約（タイムアウト対策・成果物の渡し方）。P1〜P6 §0.5 から参照 |
-| `v0/messages/S1〜S6_初回メッセージ.md` | 各セッションの初回メッセージ定型文（`{...}` は実測値で埋める） |
-| `v0/messages/再開用_ターン中断時.md` | ターンが最終報告なしで中断したときの再開メッセージ |
+| `v0/prompts/P1〜P8*.md` | v0.app に投げるプロンプト（日本語・自己完結・1セッション1成果物・§0.5 に作業規約を内蔵） |
+| `v0/prompts/P0_作業規約.md` | 全プロンプト共通の作業規約（タイムアウト対策・成果物の渡し方）。P1〜P8 §0.5 から参照 |
+| `v0/messages/S1〜S8_初回メッセージ.md` | 各セッションの初回メッセージ定型文（`{...}` は実測値で埋める） |
+| `v0/messages/再開用_ターン中断時.md` / `引き継ぎ_S7受領後.md` / `引き継ぎ_S8受領後.md` | 中断時の再開メッセージ、受領後の検収手順（新セッション用） |
 | `docs/contest_spec.md` | 採点式・提出形式・禁止事項（ローカル作成・v0 参照用） |
 | `docs/data_schema.md` | `tools/profile_data.py` の自動生成（列名・型・欠損・実例・target 定義の検算つき） |
 | `docs/baseline.md` | サンプル実測 + 自作ベースライン（Train OOS 約+2.4 / Valid +0.754）+ 目標 |
@@ -39,7 +39,7 @@
 | `tools/profile_data.py` | `docs/data_schema.md` 生成（target 定義の検算つき） |
 | `tools/make_zip.py` | 提出 zip 作成（create_zip.ipynb と同一ルール）+ zip で採点 |
 | `tools/progress.py` | Progress（JSONL + STATE.md）。長時間処理の共通規約 |
-| `strategies/v0_multifactor/` | v1 の全ファイル + `alpha.py`（walkforward API のラッパー）+ `walkforward_config.json`。v2 以降: `alpha_features.py` / `alpha_v2.py` / `submission.py` / `train_v2.py`。P5 追加: `ensemble.py` / `slowdown.py` / `regime_v4.py` / `selftest_p5.py` / `bench_p5.py`（v0 生成、ローカルで検収済み） |
+| `strategies/v0_multifactor/` | v1 の全ファイル + `alpha.py`（walkforward API のラッパー）+ `walkforward_config.json`。v2 以降: `alpha_features.py` / `alpha_v2.py` / `submission.py` / `train_v2.py`。P5 追加: `ensemble.py` / `slowdown.py` / `regime_v4.py` / `selftest_p5.py` / `bench_p5.py`。P7 追加: `selftest_p7.py` / `selftest_p7_pipeline.py` / `bench_p7.py` / `CHANGELOG_v4v5.md` / `REPORT_P7.md`。v5: `CHANGELOG_v5_size_pure.md`（config のみの変更） |
 | `requirements.txt` / `evaluate_script.py` / `input/` / `input_manifest.json` | 配布物（`evaluate_script.py` / `input/` / `input_manifest.json` は触らない。`requirements.txt` は lightgbm のみ実採点環境に合わせ 4.1.0 へ修正済み） |
 
 ## 3. 外部サービスの仕様（確定事項・再調査しないこと）
@@ -103,7 +103,13 @@
    w1.5〜3.0 の OOS カーブ最大が w2.5（コード変更なし・config のみ。`CHANGELOG_v5_size_pure.md`、
    実測は `work/reports/size_grid*.json` / `size_pure_w*.json`）。**第一目標 Valid +1.2 達成**。
    ロールバックは `work/improve3_cfgs/walkforward_config_v4s5_backup.json`。
-5. 提出判断: 現行 v5 で提出するなら P6（`v0/messages/S6_初回メッセージ.md` を最新値に更新して送信）。
-   `python tools/make_zip.py --name v0_multifactor --score` で zip 採点を確認。
-6. push / 提出 zip 作成はユーザーの明示指示があった場合のみ実行する。
+5. **提出準備完了（2026-10-04）**: 現行 v5 で提出 zip を作成済み（`strategies/v0_multifactor.zip`、22.05MB、
+   gitignore）。zip で採点して **+1.21496**（設計実測 +1.2150 と一致）を確認。S6 初回メッセージも v5 の
+   実測値に更新済み（コミット `b73d4bd`）。提出はユーザーが zip をアップロードする。
+   zip を作り直す場合: `python tools/make_zip.py --name v0_multifactor --score`。
+6. **P8（改善4: 学習型合成と線形成分）を作成済み・未送信**: `v0/prompts/P8_改善4_学習型合成と線形成分.md`
+   （combo_fit = 合成重みの学習化、ensemble_weights.linear = rank 特徴量のリッジ成分。どちらも既定 OFF で
+   v5 とビット一致が要件）、`v0/messages/S8_初回メッセージ.md`（v5 実測記入済み）、受領後の手順は
+   `v0/messages/引き継ぎ_S8受領後.md`。**push してからユーザーが v0 に S8 を貼る。**
+7. push / 提出 zip 作成はユーザーの明示指示があった場合のみ実行する。
 
