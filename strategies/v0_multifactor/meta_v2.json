@@ -1,7 +1,7 @@
 {
   "strategy": "v0_multifactor",
   "version": "alpha_v2",
-  "created_at": "2026-10-04 11:31:24",
+  "created_at": "2026-10-04 12:33:09",
   "model_dir": "models_v2",
   "model_files": [
     "lgbm_k126_s0.txt",
@@ -162,11 +162,13 @@
     "label_clip": 0.05,
     "label_min_frac": 0.5,
     "label_transform": "raw",
+    "label_window": "strict",
     "min_label_days": 100,
     "model_features": "v1",
     "drop_features": [],
     "horizon_combine": "z",
     "model_weight": 0.5,
+    "model_smoothing_span": 10,
     "sector_neutral": true,
     "sector_weight": 0.5,
     "block_set": "v1",
@@ -222,7 +224,7 @@
   },
   "skipped": {},
   "history_start": "2004-01-01",
-  "config_sha256_16": "fd9f54501804a7db",
+  "config_sha256_16": "f3e0bded1c815e19",
   "versions": {
     "lightgbm": "4.1.0",
     "pandas": "3.0.3"

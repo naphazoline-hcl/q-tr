@@ -5,6 +5,13 @@ v0_multifactor v2: 4ブロックのファクター合成（業種内順位を併
                  + 業種中心化したモデル予測の合成（sector_neutral）
                  + マクロ2局面のブロック重み切替（regime_mix、既定 OFF）。
 
+improve1（v2 -> v3 候補、CHANGELOG_v2v3.md）で追加したパラメータ（未指定なら I1 と同一の挙動）:
+- model_smoothing_span: モデル予測だけに銘柄ごとの EWMA（過去方向のみ）を掛けてから z / 業種中心化する。
+  1 以下で無効（I1 と同一）。ブロック側は遅いので触らず、回転の主因と見るモデル成分だけを遅くする。
+- label_window: "strict"（I1: 窓 t..t+k-1 が end に収まる行だけ）| "partial"（v1 と同じ:
+  end で切った target に逆順 rolling(min_periods=1) を掛ける。境界付近は短い窓になる）。
+  horizon_combine（z | mean）と組み合わせて ③ の切り分けに使う。
+
 API（docs/coding_conventions.md §2）::
 
     build_features(splits=("train",), start=None, end=None) -> DataFrame
@@ -96,11 +103,13 @@ DEFAULT_PARAMS = {
     "label_clip": None,  # None -> top-level "label_clip" of walkforward_config.json (0.05)
     "label_min_frac": 0.5,
     "label_transform": "raw",  # raw | vol | rank
+    "label_window": "strict",  # strict (I1) | partial (v1-style truncated windows near `end`)
     "min_label_days": 100,
     "model_features": "v2_slow",  # v2_slow | v1 | all | explicit list
     "drop_features": [],
     "horizon_combine": "z",  # z: per-horizon cross-sectional z then mean | mean: v1 plain mean
     "model_weight": 0.5,
+    "model_smoothing_span": 1,  # <= 1: off (I1). Per-code EWMA of the raw model prediction.
     "sector_neutral": True,
     "sector_weight": 0.5,
     "block_set": "v2",  # v2 | v1
@@ -192,7 +201,7 @@ def xsec_rank_in_group(values: pd.Series, groups, min_count: int = 3) -> pd.Seri
     """同一 (Date, group) 内の中心化順位 (rank - 0.5) / n - 0.5。
 
     小さい業種でも平均が 0 になる定義（n=1 なら 0）。有効銘柄が min_count 未満の
-    グループと業種コード欠損の行は NaN（ブロック平均では全体順位だけが使われる）。
+    グループと業種コード欠損の行は NaN（ブロック平均では全体順位だけが��われる）。
     """
     grouped = values.groupby(_group_keys(values, groups), sort=False)
     rank = grouped.rank(method="average")
@@ -242,18 +251,26 @@ def build_features(splits=("train",), start=None, end=None, codes=None) -> pd.Da
     return features
 
 
-def make_label(k: int, start=None, end=None, clip: float | None = None) -> pd.Series:
+def make_label(k: int, start=None, end=None, clip: float | None = None, window: str | None = None) -> pd.Series:
     """翌日から k 営業日の平均残差リターン mean(target[t..t+k-1])。
 
     - 読むのは Train の target ファイルだけ。end より後の行は読み込み直後に捨てる。
     - 窓の最終日（取引日カレンダー上の t+k-1）が end を超える行は NaN。
     - 上場廃止などで窓内の観測が label_min_frac 未満の行も NaN。
     - clip(label, -label_clip, +label_clip)。label_clip は params -> config の順に解決。
+    - window（未指定なら config の label_window）: "strict" は上記どおり。"partial" は v1 の
+      alpha.make_label と同じく min_periods=1・窓の打ち切り判定なし（end 直前は短い窓の平均）。
+      どちらも end より後の target は読まない（purge は呼び出し側の train_end が保証する）。
     """
     k = int(k)
     params = merged_params(None)
     clip = float(params["label_clip"] if clip is None else clip)
+    window = str(window or params.get("label_window", "strict"))
+    if window not in ("strict", "partial"):
+        raise ValueError(f"unknown label_window: {window!r} (strict | partial)")
     min_periods = max(1, int(np.ceil(k * float(params["label_min_frac"]))))
+    if window == "partial":
+        min_periods = 1
 
     with _in_data_dir():
         target = pd.read_parquet(LABEL_FILE).iloc[:, 0]  # check_lookahead: train-ok
@@ -270,6 +287,8 @@ def make_label(k: int, start=None, end=None, clip: float | None = None) -> pd.Se
     calendar = pd.DatetimeIndex(np.unique(_dates(target).to_numpy()))
     window_last = calendar.searchsorted(_dates(target)) + (k - 1)
     inside = window_last <= len(calendar) - 1
+    if window == "partial":
+        inside = np.ones(len(target), dtype=bool)
     label = forward_mean.where(inside).clip(-clip, clip)
     return label.astype(np.float32).rename(f"k{k}")
 
@@ -449,9 +468,33 @@ def predict_signal(features: pd.DataFrame, model: dict, params: dict | None = No
         signal = _add_weighted(signal, weight, z)
 
     prediction = model_prediction(features, model, config["horizon_combine"])
-    if prediction is not None:
-        signal = _add_weighted(signal, float(config["model_weight"]), xsec_z(prediction).to_numpy(np.float64))
-        if config["sector_neutral"] and "sector33" in features.columns:
-            centered = demean_in_group(prediction, features["sector33"].to_numpy())
-            signal = _add_weighted(signal, float(config["sector_weight"]), xsec_z(centered).to_numpy(np.float64))
+    sector = features["sector33"].to_numpy(np.float64) if "sector33" in features.columns else None
+    signal = add_model_terms(signal, prediction, sector, config)
     return pd.Series(signal, index=features.index, dtype=np.float32, name="signal")
+
+
+def smooth_by_code(values: pd.Series, span: int) -> pd.Series:
+    """銘柄ごとの EWMA（過去方向のみ。tools/walkforward.py の平滑化と同じ式）。span <= 1 はそのまま返す。
+
+    行は (Date, Code) の Date 昇順を前提とする（build_features の出力順）。
+    """
+    span = int(span or 1)
+    if span <= 1:
+        return values
+    return values.groupby(level="Code", sort=False).transform(lambda x: x.ewm(span=span, min_periods=1).mean())
+
+
+def add_model_terms(signal: np.ndarray, prediction: pd.Series | None, sector, config: dict) -> np.ndarray:
+    """signal + w_model z(p) + [sector_neutral] w_sector z(p - 業種平均)、p = EWMA_code(prediction)。
+
+    predict_signal と submission.py が共有する（モデル項の式を二重管理しない）。
+    model_smoothing_span <= 1（既定・I1）なら p = prediction で従来と同一。
+    """
+    if prediction is None:
+        return signal
+    prediction = smooth_by_code(prediction, int(config.get("model_smoothing_span", 1) or 1))
+    signal = _add_weighted(signal, float(config["model_weight"]), xsec_z(prediction).to_numpy(np.float64))
+    if config["sector_neutral"] and sector is not None:
+        centered = demean_in_group(prediction, sector)
+        signal = _add_weighted(signal, float(config["sector_weight"]), xsec_z(centered).to_numpy(np.float64))
+    return signal

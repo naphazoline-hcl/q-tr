@@ -183,9 +183,7 @@ def predict_split(split: str, meta: dict, config: dict, boosters: dict) -> pd.Se
     features = alpha_v2.build_features(splits=splits, start=start)
     index = features.index
     signal = block_signal(features, meta, config)
-    sector = None
-    if config["sector_neutral"] and "sector33" in features.columns:
-        sector = features["sector33"].to_numpy(dtype=np.float64)
+    sector = features["sector33"].to_numpy(dtype=np.float64) if "sector33" in features.columns else None
     ranked = None
     if boosters:
         columns = list(meta["features"])
@@ -197,13 +195,8 @@ def predict_split(split: str, meta: dict, config: dict, boosters: dict) -> pd.Se
     del ranked
     gc.collect()
 
-    if prediction is not None:
-        z_model = alpha_v2.xsec_z(prediction).to_numpy(np.float64)
-        signal = alpha_v2._add_weighted(signal, float(config["model_weight"]), z_model)
-        if sector is not None:
-            centered = alpha_v2.demean_in_group(prediction, sector)
-            z_sector = alpha_v2.xsec_z(centered).to_numpy(np.float64)
-            signal = alpha_v2._add_weighted(signal, float(config["sector_weight"]), z_sector)
+    # Same model terms as alpha_v2.predict_signal (model_smoothing_span / sector_neutral included).
+    signal = alpha_v2.add_model_terms(signal, prediction, sector, config)
     raw = pd.Series(signal, index=index, dtype=np.float32, name="signal")
     smoothed = smooth_by_code(raw, int(meta["smoothing_span"]))
     return smoothed.reindex(scoring_index(split))

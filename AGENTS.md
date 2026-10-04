@@ -13,7 +13,7 @@
   v0 は 1 セッション 1〜3 メッセージ、1 メッセージ 25 分、fast モード対応。
   v0 は入力データを持たない前提で、実行・計測はローカルで行う。
 - **環境**: `.venv`（Python 3.13 + 配布固定 5 パッケージ。配布要件は 3.11 だがバージョン同一のため等価。ただし lightgbm は実採点環境に合わせ **4.1.0**）。
-- **現状**: `strategies/v0_multifactor` に v2 一式（alpha_features / alpha_v2 / train_v2 / submission）を実装・検証済み（Train OOS +2.084 / Valid +0.747、config は I1）。暫定提出は v1（Valid +0.754）のまま。
+- **現状**: `strategies/v0_multifactor` に v3 候補 K1（alpha_v2 + model_smoothing_span 10）まで実装・検証済み（Train OOS +2.0391 / Valid +0.7591 / 回転率 0.0161）。提出候補は v3/K1（旧暫定提出は v1）。
 
 ## 2. ファイルマップ
 
@@ -79,10 +79,9 @@
 
 ## 6. 次の作業
 
-1. **S4 の送信**: `v0/messages/S4_初回メッセージ.md`（実測記入済み）。P4 の改善対象は
-   `strategies/v0_multifactor/alpha_v2.py` + `walkforward_config.json`。検証は `--module alpha_v2` を付ける。
-2. 受領後: py_compile → walkforward（Train OOS、基準 +2.084）→ train_v2 → score valid（基準 +0.747）→
-   lookahead --runtime。
-3. 現時点の提出候補は **v1（Valid +0.754）**。Train OOS と Valid の両方で v1 を上回った時点で差し替える。
-4. Valid +1.2 超えで中間報告、+1.5 で最終レポート（P6）→ 提出 zip。
+1. **S5 の送信**: `v0/messages/S5_初回メッセージ.md`（実測記入済み）。P5 はアンサンブル（Ridge / 順位回帰）+
+   局面配分 + turnover_cap。検証は `--module alpha_v2` を付ける。
+2. 受領後: py_compile → walkforward（Train OOS、基準 +2.0391）→ train_v2 → score valid（基準 +0.7591）→
+   lookahead --runtime。採用は Train OOS と Valid の両方で現行を上回ったものだけ。
+3. 提出候補は **v3/K1（Train +2.0391 / Valid +0.7591）**。Valid +1.2 超えで中間報告、+1.5 で最終レポート（P6）→ 提出 zip。
 
