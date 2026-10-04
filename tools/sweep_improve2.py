@@ -201,13 +201,34 @@ VARIANTS: dict[str, dict] = {
                              "model_weight": 0.25, "model_smoothing_span": 30},
     "mw025_ridge06_span15": {"ensemble_weights": {"lgbm": 1.0, "ridge": 0.6, "rank": 0.0},
                              "model_weight": 0.25, "model_smoothing_span": 15},
+    # P5 local follow-up 3: span refine around the adopted mw025_ridge06 (base spec is pinned to K1 now)
+    "mw025_ridge04_span20": {"ensemble_weights": {"lgbm": 1.0, "ridge": 0.4, "rank": 0.0},
+                             "model_weight": 0.25, "model_smoothing_span": 20},
+    "mw025_ridge06_span10": {"ensemble_weights": {"lgbm": 1.0, "ridge": 0.6, "rank": 0.0},
+                             "model_weight": 0.25, "model_smoothing_span": 10},
+    "mw025_ridge06_span12": {"ensemble_weights": {"lgbm": 1.0, "ridge": 0.6, "rank": 0.0},
+                             "model_weight": 0.25, "model_smoothing_span": 12},
+    "mw025_ridge06_span35": {"ensemble_weights": {"lgbm": 1.0, "ridge": 0.6, "rank": 0.0},
+                             "model_weight": 0.25, "model_smoothing_span": 35},
+    "neutral_only_span15": {"model_weight": 0.0, "model_smoothing_span": 15},
+    # P5 local follow-up 4: rank on top of the adopted combo (rank preds are in the components)
+    "rank06": {"ensemble_weights": {"lgbm": 1.0, "ridge": 0.0, "rank": 0.6}},
+    "rank10": {"ensemble_weights": {"lgbm": 1.0, "ridge": 0.0, "rank": 1.0}},
+    "mw025_rank03_span20": {"ensemble_weights": {"lgbm": 1.0, "ridge": 0.0, "rank": 0.3},
+                            "model_weight": 0.25, "model_smoothing_span": 20},
+    "mw025_ridge06_rank03_span20": {"ensemble_weights": {"lgbm": 1.0, "ridge": 0.6, "rank": 0.3},
+                                    "model_weight": 0.25, "model_smoothing_span": 20},
+    "mw025_ridge06_rank06_span20": {"ensemble_weights": {"lgbm": 1.0, "ridge": 0.6, "rank": 0.6},
+                                    "model_weight": 0.25, "model_smoothing_span": 20},
 }
 
 
 def base_spec(config: dict) -> dict:
+    """候補の基準 = K1（S4）。walkforward_config.json の現在値（採用版の mw/span 等）に依存しないよう固定する。"""
     params = {**config.get("params", {})}
     params.update({"ensemble_weights": {"lgbm": 1.0, "ridge": 0.0, "rank": 0.0}, "regime_mix": False,
-                   "model_smoothing_span": 10})
+                   "model_weight": 0.5, "model_smoothing_span": 10,
+                   "block_weights": {"size": 1.0, "value": 0.5, "quality": 0.5, "lowrisk": 0.3}})
     params["smoothing_span"] = int(config.get("smoothing_span", 5))
     return params
 
