@@ -17,7 +17,11 @@
   `size_pure {"logsize": -1}` を weight 2.5 で追加、旧 size ブロック廃止。コード変更なし・config のみ）。
   実測 **Train OOS +2.2857 / Valid +1.2150 / Valid 回転率 0.0109（コスト 0.27%/年）**。
   P7（新ブロック・ロバスト化）は受領・検収済みだが全候補不採用。**第一目標 Valid +1.2 は達成**、第二目標 +1.5 は未達。
-  提出候補は v5（旧候補は v4/S5、旧暫定提出は v1）。詳細は `CHANGELOG_v5_size_pure.md` と `docs/baseline.md`。
+  P8（学習型合成 `blend_learning`・線形成分 `ensemble_weights.linear`）も受領・検収済み。受領版が S5 コードベース
+  だったため P7 コードへ 3-way マージして反映（既定 OFF・v5 ビット一致）し、linear 5候補・blend 2候補を実測したが
+  **すべて Train OOS と Valid の両方で v5 を上回らず不採用**（blend blocks は OOS +2.3057 も Valid +1.1742）。
+  提出候補は v5（旧候補は v4/S5、旧暫定提出は v1）。詳細は `CHANGELOG_v5_size_pure.md` / `CHANGELOG_v5v6.md` と
+  `docs/baseline.md`。
 
 ## 2. ファイルマップ
 
@@ -39,7 +43,7 @@
 | `tools/profile_data.py` | `docs/data_schema.md` 生成（target 定義の検算つき） |
 | `tools/make_zip.py` | 提出 zip 作成（create_zip.ipynb と同一ルール）+ zip で採点 |
 | `tools/progress.py` | Progress（JSONL + STATE.md）。長時間処理の共通規約 |
-| `strategies/v0_multifactor/` | v1 の全ファイル + `alpha.py`（walkforward API のラッパー）+ `walkforward_config.json`。v2 以降: `alpha_features.py` / `alpha_v2.py` / `submission.py` / `train_v2.py`。P5 追加: `ensemble.py` / `slowdown.py` / `regime_v4.py` / `selftest_p5.py` / `bench_p5.py`。P7 追加: `selftest_p7.py` / `selftest_p7_pipeline.py` / `bench_p7.py` / `CHANGELOG_v4v5.md` / `REPORT_P7.md`。v5: `CHANGELOG_v5_size_pure.md`（config のみの変更） |
+| `strategies/v0_multifactor/` | v1 の全ファイル + `alpha.py`（walkforward API のラッパー）+ `walkforward_config.json`。v2 以降: `alpha_features.py` / `alpha_v2.py` / `submission.py` / `train_v2.py`。P5 追加: `ensemble.py` / `slowdown.py` / `regime_v4.py` / `selftest_p5.py` / `bench_p5.py`。P7 追加: `selftest_p7.py` / `selftest_p7_pipeline.py` / `bench_p7.py` / `CHANGELOG_v4v5.md` / `REPORT_P7.md`。v5: `CHANGELOG_v5_size_pure.md`（config のみの変更）。P8 追加: `blend.py` / `selftest_p8.py` / `CHANGELOG_v5v6.md` / `REPORT_P8.md`（既定 OFF。v0 受領版は S5 ベースのため現行コードへ 3-way マージ済み） |
 | `requirements.txt` / `evaluate_script.py` / `input/` / `input_manifest.json` | 配布物（`evaluate_script.py` / `input/` / `input_manifest.json` は触らない。`requirements.txt` は lightgbm のみ実採点環境に合わせ 4.1.0 へ修正済み） |
 
 ## 3. 外部サービスの仕様（確定事項・再調査しないこと）
@@ -107,9 +111,11 @@
    gitignore）。zip で採点して **+1.21496**（設計実測 +1.2150 と一致）を確認。S6 初回メッセージも v5 の
    実測値に更新済み（コミット `b73d4bd`）。提出はユーザーが zip をアップロードする。
    zip を作り直す場合: `python tools/make_zip.py --name v0_multifactor --score`。
-6. **P8（改善4: 学習型合成と線形成分）を作成済み・未送信**: `v0/prompts/P8_改善4_学習型合成と線形成分.md`
-   （combo_fit = 合成重みの学習化、ensemble_weights.linear = rank 特徴量のリッジ成分。どちらも既定 OFF で
-   v5 とビット一致が要件）、`v0/messages/S8_初回メッセージ.md`（v5 実測記入済み）、受領後の手順は
-   `v0/messages/引き継ぎ_S8受領後.md`。**push してからユーザーが v0 に S8 を貼る。**
+6. **P8（改善4: 学習型合成と線形成分）は受領・検収済み（2026-10-05、不採用）**: 受領 ZIP は S5 コードベース
+   だったため P7 コードへ 3-way マージして反映（`blend.py` / `selftest_p8.py` 追加。既定 OFF で
+   `selftest_p8.py --reference work/ref_v5` が max|diff|=0、walkforward 基準 +2.2857 を再現）。実測は
+   linear 5候補が OOS +2.2402〜+2.2837、blend blocks が OOS **+2.3057** / Valid **+1.1742**、
+   blend ensemble+model が OOS +2.1807 → すべて不採用。v5 復元後に Valid +1.2150 を再現。
+   実測 JSON は `work/reports/improve4_*.json`。**提出候補は v5 のまま**（zip 作成済み・再作成不要）。
 7. push / 提出 zip 作成はユーザーの明示指示があった場合のみ実行する。
 

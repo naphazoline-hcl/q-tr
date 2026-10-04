@@ -173,6 +173,30 @@ Valid で薄まる）。**コード変更なし・config の blocks 上書きの
   `work/improve3_cfgs/walkforward_config_v4s5_backup.json` を live config に戻して train_v2 再実行。
 - **第一目標（Valid +1.2）達成。**次は +1.5 を目指す。
 
+#### P8（改善4: 学習型合成と線形成分）の検収と実測（2026-10-05、不採用）
+
+v0 の受領パッケージ（`work/s8_package`）は GitHub の v4/S5 コードベースだったため、現行の P7 コードと
+3-way マージして反映（`alpha_v2.py` / `ensemble.py` / `submission.py` / `train_v2.py` 更新 +
+`blend.py` / `selftest_p8.py` / `CHANGELOG_v5v6.md` / `REPORT_P8.md` 追加）。マージ後も既定 OFF で
+v5 とビット一致することを確認（`selftest_p8.py --reference work/ref_v5` で max|diff|=0、walkforward 基準
++2.2857 を再現）。その上で候補を実測:
+
+| 候補 | Train OOS | 回転率 | 判定 |
+|---|---|---|---|
+| `ensemble_weights.linear` = 0.1 / 0.3 / 0.5 / 1.0 | +2.2837 / +2.2486 / +2.2474 / +2.2402 | 0.0128〜0.0130 | 不採用（OOS 未達、重み増で単調低下） |
+| `linear` = 0.6 + `linear.l2` = 0.03 | +2.2569 | 0.0129 | 不採用 |
+| `blend_learning` targets=["blocks"] shrink 0.5 | **+2.3057** | 0.0123 | OOS は基準超えも **Valid +1.1742**（グロス +4.22% / 回転率 0.0106 / maxDD −3.90%）で未達 → 不採用 |
+| `blend_learning` targets=["ensemble","model"] shrink 0.5 | +2.1807 | 0.0126 | 不採用 |
+| `linear` 0.3 + blend all | 未実行（成分単独がいずれも未達のため） | — | 不採用 |
+
+- 実測 JSON: `work/reports/improve4_wf_baseline.json`（基準 +2.2857）、`improve4_lin_*.json`、
+  `improve4_blend_*.json`、`improve4_blend_blocks_valid.json`、`improve4_restore_v5_valid.json`
+  （v5 復元後に Valid +1.2150 / 回転率 0.0109 / グロス +4.37% を再現）。
+- 結論: P8 の 2 機能はどちらも v5 を上回らず、**提出候補は v5 のまま**。コードは既定 OFF・v5 ビット一致の
+  まま保持（将来の再利用用）。linear / blend は P7 の `sample_decay_halflife` に未対応（受領版が S5 ベースのため）。
+- 参考: `selftest_p7.py` は現行 v5 config の明示 `blocks` とテスト前提が食い違うため通常実行では NG 表示だが、
+  config なし隔離コピーでは RESULT OK（P8 マージによる回帰なし）。受領 alpha_v2.py の文字化け 1 行は復元。
+
 ### Valid 実測（2016-04-01 〜 2026-07-31）
 
 > ※ lightgbm 4.1.0（実採点環境）で再計測しても値は完全一致

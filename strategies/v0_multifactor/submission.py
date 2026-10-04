@@ -12,6 +12,10 @@ improve3（P7）: 推論の式は変えない。feature_top_k で学習した場
 そのまま使い、LGBM / rank の列名・列順序の一致を従来どおり確認する（feature_selection.columns との一致も確認）。
 block_set "v3" は meta の "blocks" / ridge["blocks"] に凍結されたブロック定義で計算される。
 
+improve4（P8）: 線形成分は meta_v2.json の "linear"（係数 JSON。LGBM と同じ順位行列から計算）、
+学習型合成は "blend"（学習時に推定した重みで params を上書き: blend.apply）。どちらも既定 OFF。
+同梱物に blend.py を追加。
+
 同梱物（Path(__file__).resolve().parent 基準）: meta_v2.json / models_v2/*.txt / alpha_v2.py /
 alpha_features.py / ensemble.py / regime_v4.py / slowdown.py。配布 parquet はベース名で相対読みする。
 
@@ -48,6 +52,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import alpha_v2  # noqa: E402
+import blend  # noqa: E402
 import ensemble  # noqa: E402
 
 # Valid starts 2016-04-01; 2014-06-01 leaves > 250 trading days for the rolling windows.
@@ -203,8 +208,9 @@ def predict_split(split: str, meta: dict, config: dict, boosters: dict, rank_mod
     ridge = alpha_v2.ridge_prediction(features, meta.get("ridge"), blocks_z, config) if weights["ridge"] else None
     del blocks_z
     sector = features["sector33"].to_numpy(dtype=np.float64) if "sector33" in features.columns else None
+    linear = meta.get("linear") if weights["linear"] != 0.0 else None
     ranked = None
-    if boosters or rank_models:
+    if boosters or rank_models or linear:
         columns = list(meta["features"])
         ranked = pd.DataFrame(ranked_matrix(features, columns), index=index, columns=columns, copy=False)
     del features
@@ -216,6 +222,8 @@ def predict_split(split: str, meta: dict, config: dict, boosters: dict, rank_mod
         matrix = np.ascontiguousarray(ranked.to_numpy(dtype=np.float32, copy=False))
         predictions["rank"] = ensemble.combine_rank({n: b.predict(matrix) for n, b in rank_models.items()}, index)
         del matrix
+    if linear:
+        predictions["linear"] = ensemble.predict_linear(ranked, linear)
     del ranked
     gc.collect()
     prediction = ensemble.combine(predictions, weights)
@@ -235,6 +243,8 @@ def predict() -> pd.DataFrame:
         config["blocks"] = meta["blocks"]
     # meta_v2.json written before improve2 has no regime_mode: its regime_mix meant the P2 2-regime rule.
     config.setdefault("regime_mode", "legacy")
+    # P8 A: weights learned at training time (meta "blend"); no-op when blend_learning is off.
+    config = blend.apply(config, meta.get("blend"))
     boosters = load_boosters(meta) if ensemble.ensemble_weights(config)["lgbm"] != 0.0 else {}
     rank_models = load_rank_models(meta, config)
     parts = [predict_split(split, meta, config, boosters, rank_models) for split in requested_splits()]

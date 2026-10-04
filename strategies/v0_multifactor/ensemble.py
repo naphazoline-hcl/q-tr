@@ -5,6 +5,10 @@
 - rank : LightGBM ranking / quantile model on the same ranked inputs as the main LGBM.
          objective = lambdarank | rank_xendcg (per-Date query, label = per-Date quantile bucket)
                    | quantile (median regression on the clipped label). Default OFF (weight 0).
+- linear: P8 B. Pooled ridge on the centered same-Date ranks (rank - 0.5, missing -> 0) of the
+         LGBM input columns (SECTOR_COLUMNS excluded). One coefficient vector per horizon, solved from
+         the normal equations accumulated in row chunks (no float64 copy of the panel).
+         A different functional form from the trees (global, additive, monotone). Default OFF (weight 0).
 - combine(): every model prediction is z-scored within the same Date, then summed with
   params["ensemble_weights"]. If only "lgbm" is active the LGBM prediction is returned as is
   (bit-identical to K1).
@@ -19,8 +23,17 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import Ridge
 
-MODEL_KEYS = ("lgbm", "ridge", "rank")
-DEFAULT_ENSEMBLE_WEIGHTS = {"lgbm": 1.0, "ridge": 0.0, "rank": 0.0}
+MODEL_KEYS = ("lgbm", "ridge", "rank", "linear")
+# "linear" is appended last: the iteration order (= summation order in combine) of the old keys is unchanged.
+DEFAULT_ENSEMBLE_WEIGHTS = {"lgbm": 1.0, "ridge": 0.0, "rank": 0.0, "linear": 0.0}
+
+DEFAULT_LINEAR = {
+    "l2": 0.01,  # penalty on the mean-squared-error scale (centered ranks have variance ~1/12 = 0.083)
+    "label_demean": True,  # regress the same-Date demeaned label
+    "features": None,  # None -> LGBM input columns minus SECTOR_COLUMNS; or an explicit subset of them
+    "drop_features": [],
+    "chunk_rows": 200_000,
+}
 
 DEFAULT_RIDGE = {
     "alpha": 10.0,
@@ -223,3 +236,66 @@ def combine_rank(raw: dict[str, np.ndarray], index: pd.Index) -> pd.Series | Non
             score = score - xsec_z(pd.Series(np.mean(sides["short"], axis=0), index=index)).to_numpy(np.float64)
         parts.append(xsec_z(pd.Series(score, index=index)).to_numpy(np.float64))
     return pd.Series(np.mean(parts, axis=0), index=index, dtype=np.float64)
+
+
+# ------------------------------------------------------------ linear (P8 B)
+
+
+def _column_view(ranked: pd.DataFrame, columns: list[str]) -> tuple[np.ndarray, list[int]]:
+    """ranked の裏の行列（コピーなし）と、使う列の位置。列の部分集合 DataFrame は作らない（省メモリ）。"""
+    missing = [c for c in columns if c not in ranked.columns]
+    if missing:
+        raise KeyError(f"linear: columns not in the ranked model inputs: {missing}")
+    return ranked.to_numpy(dtype=np.float32, copy=False), [ranked.columns.get_loc(c) for c in columns]
+
+
+def _centered_chunk(matrix: np.ndarray, rows: slice, positions: list[int]) -> np.ndarray:
+    """same-Date pct rank (0, 1] -> rank - 0.5（float64）。欠損は中立 0。"""
+    chunk = np.asarray(matrix[rows][:, positions], dtype=np.float64) - 0.5
+    return np.nan_to_num(chunk, nan=0.0)
+
+
+def fit_linear(ranked: pd.DataFrame, columns: list[str], labels: pd.DataFrame, cfg: dict, clip: float) -> dict:
+    """ホライズンごとに (X'X/n + l2 I) b = X'y/n を解く。X = 中心化順位、y = clip 後（同日 demean）のラベル。"""
+    out = {"columns": list(columns), "coef": {}, "rows": {}, "l2": float(cfg["l2"])}
+    if not columns:
+        return out
+    matrix, positions = _column_view(ranked, list(columns))
+    step = max(1000, int(cfg.get("chunk_rows") or 200_000))
+    for horizon in labels.columns:
+        y = labels[horizon].reindex(ranked.index).astype(np.float64).clip(-clip, clip)
+        y = y - (y.groupby(level="Date").transform("mean") if cfg["label_demean"] else y.mean())
+        y = y.to_numpy(np.float64)
+        mask = np.isfinite(y)
+        n = int(mask.sum())
+        if n < 1000:
+            continue
+        xtx = np.zeros((len(columns), len(columns)), dtype=np.float64)
+        xty = np.zeros(len(columns), dtype=np.float64)
+        for start in range(0, len(y), step):
+            rows = slice(start, start + step)
+            keep = mask[rows]
+            if not keep.any():
+                continue
+            x = _centered_chunk(matrix, rows, positions)[keep]
+            xtx += x.T @ x
+            xty += x.T @ y[rows][keep]
+        system = xtx / n + float(cfg["l2"]) * np.eye(len(columns))
+        out["coef"][horizon] = [float(c) for c in np.linalg.solve(system, xty / n)]
+        out["rows"][horizon] = n
+    return out
+
+
+def predict_linear(ranked: pd.DataFrame, linear: dict | None, chunk_rows: int = 200_000) -> pd.Series | None:
+    """ホライズンごとに X @ coef -> 同日断面 z -> ホライズン平均（ridge / LGBM と同じ合成規則）。"""
+    if not linear or not linear.get("coef"):
+        return None
+    matrix, positions = _column_view(ranked, list(linear["columns"]))
+    coefs = np.asarray(list(linear["coef"].values()), dtype=np.float64).T  # (columns, horizons)
+    raw = np.empty((len(ranked), coefs.shape[1]), dtype=np.float64)
+    step = max(1000, int(chunk_rows))
+    for start in range(0, len(ranked), step):
+        rows = slice(start, start + step)
+        raw[rows] = _centered_chunk(matrix, rows, positions) @ coefs
+    parts = [xsec_z(pd.Series(raw[:, j], index=ranked.index)).to_numpy(np.float64) for j in range(raw.shape[1])]
+    return pd.Series(np.mean(parts, axis=0), index=ranked.index, dtype=np.float64)

@@ -28,6 +28,12 @@ improve3（v4 -> v5 候補、CHANGELOG_v4v5.md）で追加したもの（既定�
 - feature_top_k（None | 整数）: 2 パス学習。1 パス目の (horizon, seed) LGBM の gain 平均順位で上位 k 列
   （SECTOR_COLUMNS は常に残す）を選び、2 パス目でその列だけを学習する。result["columns"] = 選択列。
 
+improve4（P8、v5 -> v6 候補、CHANGELOG_v5v6.md）で追加したパラメータ（既定値なら v5 とビット一致）:
+- ensemble_weights["linear"]（既定 0.0）+ linear: LGBM と同じ入力列の中心化順位に対するプール ridge
+  （ensemble.fit_linear）。0 なら学習も予測もしない。
+- blend_learning（既定 enabled=False）: block_weights / ensemble_weights / model_weight・sector_weight を
+  学習期間だけで推定し model["blend"] に保存、予測時に blend.apply で params を上書きする（blend.py）。
+
 API（docs/coding_conventions.md §2）::
 
     build_features(splits=("train",), start=None, end=None) -> DataFrame
@@ -56,6 +62,7 @@ import pandas as pd
 from alpha_features import ALL_COLUMNS, V1_COLUMNS, SECTOR_COLUMNS
 from alpha_features import build_features as build_v2
 
+import blend
 import ensemble
 import regime_v4
 import slowdown
@@ -169,6 +176,9 @@ DEFAULT_PARAMS = {
     # improve3 (P7 B). None = off (bit-identical to v4/S5).
     "sample_decay_halflife": None,  # None | trading days: row weight 0.5 ** (age / halflife), age <= 0 never
     "feature_top_k": None,  # None | int: 2-pass LGBM, keep the top-k gain columns (+ every SECTOR_COLUMN)
+    # improve4 (P8). Defaults keep v5 unchanged: ensemble_weights["linear"] = 0 and blend_learning off.
+    "linear": ensemble.DEFAULT_LINEAR,
+    "blend_learning": blend.DEFAULT_BLEND,
 }
 DEFAULT_LABEL_CLIP = 0.05
 
@@ -589,6 +599,14 @@ def fit_extras(features: pd.DataFrame, labels: pd.DataFrame, config: dict, model
         categorical = [c for c in columns if c in SECTOR_COLUMNS]
         model["rank"] = ensemble.fit_rank(ranked[columns], labels, rank_cfg, categorical, clip,
                                           sample_weight=weight)
+    if weights["linear"] != 0.0:
+        linear_cfg = ensemble.merged_section(config, "linear", ensemble.DEFAULT_LINEAR)
+        columns = model.get("columns") or model_columns(features, config)
+        if ranked is None:
+            ranked = rank_for_model(features, columns)
+        model["linear"] = ensemble.fit_linear(ranked, linear_columns(columns, linear_cfg), labels, linear_cfg, clip)
+    if blend.is_on(config):
+        model["blend"] = fit_blend(features, labels, config, model, ranked)
     if str(config.get("turnover_control", "off")) == "auto":
         estimates = estimate_spans(features, model, config)
         model["turnover_estimates"] = estimates
@@ -602,6 +620,7 @@ def estimate_spans(features: pd.DataFrame, model: dict, config: dict) -> dict[in
     最終平滑化（walkforward_config.json の smoothing_span）も掛けた後の値。
     """
     tail = features.loc[slowdown.tail_rows(features.index, int(config["turnover_window"]))]
+    config = blend.apply(config, model.get("blend"))
     base, prediction, sector = signal_parts(tail, model, config)
     final_span = int(load_config().get("smoothing_span", 5))
     estimates = {}
@@ -610,6 +629,124 @@ def estimate_spans(features: pd.DataFrame, model: dict, config: dict) -> dict[in
         signal = slowdown.ewm_by_code(pd.Series(raw, index=tail.index), final_span)
         estimates[int(span)] = round(slowdown.quintile_turnover(signal), 5)
     return estimates
+
+
+def linear_columns(columns: list[str], cfg: dict) -> list[str]:
+    """線形成分の入力列 = LGBM 入力列から SECTOR_COLUMNS（コード値）を除いたもの（features 指定時はその部分集合）。"""
+    base = [c for c in columns if c not in SECTOR_COLUMNS]
+    if cfg.get("features"):
+        missing = [c for c in cfg["features"] if c not in base]
+        if missing:
+            raise ValueError(f"linear.features must be a subset of the LGBM input columns: {missing}")
+        base = list(cfg["features"])
+    drop = set(cfg.get("drop_features") or [])
+    return [c for c in base if c not in drop]
+
+
+def _inner_predictions(features: pd.DataFrame, labels: pd.DataFrame, config: dict, model: dict,
+                       ranked: pd.DataFrame | None, cfg: dict, y: np.ndarray):
+    """P8 A: purge 付き内側学習（cut より前に窓が終わる行）で各成分を学習し直し、ホールドアウトを予測する。"""
+    cut = blend.inner_cut(features.index, y, cfg["holdout_frac"], cfg["min_holdout_dates"])
+    if cut is None:
+        return None
+    holdout = np.asarray(_dates(features) >= cut)
+    weights = ensemble.ensemble_weights(config)
+    clip = float(config["label_clip"])
+    inner = pd.DataFrame({h: labels[h].where(blend.before_cut(features.index, cut, int(h[1:])))
+                          for h in labels.columns})
+    columns = model.get("columns") or model_columns(features, config)
+    if ranked is None and (weights["lgbm"] != 0.0 or weights["linear"] != 0.0):
+        ranked = rank_for_model(features, columns)
+    preds: dict[str, pd.Series | None] = {}
+    if weights["lgbm"] != 0.0 and model.get("models"):
+        params = dict(config["model_params"])
+        params.pop("random_state", None)
+        if cfg.get("inner_n_estimators"):
+            params["n_estimators"] = int(cfg["inner_n_estimators"])
+        categorical = [c for c in columns if c in SECTOR_COLUMNS]
+        trained = {name.rsplit("_s", 1)[0] for name in model["models"]}
+        boosters = {}
+        for horizon in [h for h in inner.columns if h in trained]:
+            target = transform_label(inner[horizon].clip(-clip, clip), features, config["label_transform"])
+            mask = target.notna().to_numpy()
+            if int(_dates(target)[mask].nunique()) < int(config["min_label_days"]):
+                continue
+            for seed in cfg["inner_seeds"]:
+                booster = lgb.LGBMRegressor(random_state=int(seed), **params)
+                booster.fit(ranked.loc[mask], target.loc[mask], categorical_feature=categorical)
+                boosters[f"{horizon}_s{seed}"] = booster
+        preds["lgbm"] = model_prediction(features.loc[holdout], {"models": boosters, "columns": columns},
+                                         config["horizon_combine"], ranked=ranked.loc[holdout])
+    if weights["ridge"] != 0.0 and model.get("ridge"):
+        ridge_cfg = ensemble.merged_section(config, "ridge", ensemble.DEFAULT_RIDGE)
+        ridge_config = dict(config, blocks=ridge_cfg["blocks"] or config.get("blocks"))
+        frame = ensemble.block_frame({b: xsec_z(s).to_numpy(np.float64)
+                                      for b, s in block_scores(features, ridge_config).items()}, features.index)
+        preds["ridge"] = ensemble.predict_ridge(frame.loc[holdout], ensemble.fit_ridge(frame, inner, ridge_cfg, clip))
+    if weights["linear"] != 0.0 and model.get("linear"):
+        linear_cfg = ensemble.merged_section(config, "linear", ensemble.DEFAULT_LINEAR)
+        fitted = ensemble.fit_linear(ranked, model["linear"]["columns"], inner, linear_cfg, clip)
+        preds["linear"] = ensemble.predict_linear(ranked.loc[holdout], fitted)
+    return cut, holdout, {k: v for k, v in preds.items() if v is not None}
+
+
+def fit_blend(features: pd.DataFrame, labels: pd.DataFrame, config: dict, model: dict,
+              ranked: pd.DataFrame | None = None) -> dict:
+    """P8 A: 合成重みを学習期間だけで推定する（blend.py の docstring 参照）。戻り値は JSON 化できる dict。"""
+    cfg = blend.settings(config)
+    targets = set(cfg["targets"])
+    labels = labels.reindex(features.index)  # positional masks below assume the features row order
+    y = blend.target_vector(labels, float(config["label_clip"]))
+    out: dict = {"targets": sorted(targets), "shrink": float(cfg["shrink"]), "notes": []}
+    blocks_z = {b: xsec_z(s).to_numpy(np.float64) for b, s in block_scores(features, config).items()}
+    block_weights = {b: float(config["block_weights"].get(b, 0.0)) for b in blocks_z}
+    if "blocks" in targets:
+        manual = {b: w for b, w in block_weights.items() if w != 0.0}
+        learned = blend.solve({b: blocks_z[b] for b in manual}, y, cfg["l2"], cfg["nonneg"])
+        block_weights.update(blend.rescale_mix(manual, learned, cfg["shrink"]))
+        out.update(learned_blocks=learned, block_weights=block_weights)
+    if not targets & {"ensemble", "model"}:
+        return out
+    inner = _inner_predictions(features, labels, config, model, ranked, cfg, y)
+    if inner is None or not inner[2]:
+        out["notes"].append("inner holdout unavailable (too few label dates / no member) -> manual")
+        return out
+    cut, holdout, preds = inner
+    out.update(holdout_from=str(cut.date()), holdout_rows=int(holdout.sum()))
+    y_hold = y[holdout]
+    weights = ensemble.ensemble_weights(config)
+    if "ensemble" in targets and len(preds) >= 2:
+        manual = {m: weights[m] for m in preds}
+        learned = blend.solve({m: xsec_z(p).to_numpy(np.float64) for m, p in preds.items()}, y_hold,
+                              cfg["l2"], cfg["nonneg"])
+        weights.update(blend.rescale_mix(manual, learned, cfg["shrink"]))
+        out.update(learned_ensemble=learned, ensemble_weights={m: weights[m] for m in preds})
+    if "model" in targets:
+        sub = features.loc[holdout]
+        p = ensemble.combine(preds, {m: weights[m] for m in preds})
+        if p is None:
+            out["notes"].append("model: all member weights are 0 -> manual")
+            return out
+        p = smooth_by_code(p, int(config.get("model_smoothing_span", 1) or 1))
+        composite = np.zeros(len(sub), dtype=np.float64)
+        for b, w in block_weights.items():
+            composite = _add_weighted(composite, w, np.nan_to_num(blocks_z[b][holdout], nan=0.0))
+        terms = {"blocks": composite, "model": xsec_z(p).to_numpy(np.float64)}
+        if config["sector_neutral"] and "sector33" in sub.columns:
+            centered = demean_in_group(p, sub["sector33"].to_numpy(np.float64))
+            terms["sector"] = xsec_z(centered).to_numpy(np.float64)
+        learned = blend.solve(terms, y_hold, cfg["l2"], cfg["nonneg"])
+        out["learned_model"] = learned
+        if learned.get("blocks", 0.0) <= 0.0:
+            out["notes"].append("model: block composite weight <= 0 -> manual model/sector weights")
+            return out
+        cap = cfg["max_model_ratio"]
+        out["model_weight"] = blend.ratio_mix(float(config["model_weight"]), learned["model"] / learned["blocks"],
+                                              cfg["shrink"], cap)
+        if "sector" in terms:
+            out["sector_weight"] = blend.ratio_mix(float(config["sector_weight"]),
+                                                   learned["sector"] / learned["blocks"], cfg["shrink"], cap)
+    return out
 
 
 def resolve_blocks(config: dict) -> dict:
@@ -696,7 +833,7 @@ def predict_signal(features: pd.DataFrame, model: dict, params: dict | None = No
 
     平滑化前の生シグナル（index は features と同じ）。z は同一 Date の断面 z（±3 で clip）。
     """
-    config = merged_params(params)
+    config = blend.apply(merged_params(params), (model or {}).get("blend"))
     base, prediction, sector = signal_parts(features, model, config)
     span = (model or {}).get("model_smoothing_span") or config.get("model_smoothing_span", 1)
     signal = add_model_terms(base, prediction, sector, dict(config, model_smoothing_span=span))
@@ -754,13 +891,17 @@ def signal_parts(features: pd.DataFrame, model: dict, config: dict):
     weights = ensemble.ensemble_weights(config)
     columns = model.get("columns")
     need_rank = weights["rank"] != 0.0 and bool(model.get("rank"))
-    ranked = rank_for_model(features, columns) if columns and (model.get("models") or need_rank) else None
+    need_linear = weights["linear"] != 0.0 and bool(model.get("linear"))
+    need_ranked = model.get("models") or need_rank or need_linear
+    ranked = rank_for_model(features, columns) if columns and need_ranked else None
     predictions = {"lgbm": model_prediction(features, model, config["horizon_combine"], ranked=ranked)}
     if weights["ridge"] != 0.0:
         predictions["ridge"] = ridge_prediction(features, model.get("ridge"), blocks_z, config)
     if need_rank:
         raw = {name: m.predict(ranked[_feature_names(m)]) for name, m in model["rank"].items()}
         predictions["rank"] = ensemble.combine_rank(raw, features.index)
+    if need_linear:
+        predictions["linear"] = ensemble.predict_linear(ranked, model["linear"])
     del ranked
     sector = features["sector33"].to_numpy(np.float64) if "sector33" in features.columns else None
     return base, ensemble.combine(predictions, weights), sector

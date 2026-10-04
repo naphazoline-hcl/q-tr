@@ -22,6 +22,9 @@
   sample_decay_halflife は fit_model / fit_extras の内部で効く（学習行の最終 Date 基準、Train のみ）。
   どちらも None（既定）なら学習・モデルは従来と同一（meta_v2.json には null の 2 キー
   "feature_selection" / "sample_decay" が増えるだけ）。
+- improve4（P8）: 線形成分（ensemble_weights.linear != 0）の係数は meta_v2.json の "linear"、
+  学習型合成（blend_learning.enabled）の推定重みは "blend"（どちらも JSON。既定 OFF なら null）。
+  (k, seed) ごとの LGBM 学習では linear / blend を無効にし、extras で 1 回だけ学習する。
 """
 
 from __future__ import annotations
@@ -150,6 +153,8 @@ def build_meta(alpha, strategy_dir: Path, config: dict, params: dict, horizons: 
         # P7 B (None when off). "features" above already holds the selected columns.
         "feature_selection": extras.get("feature_selection"),
         "sample_decay": extras.get("sample_decay"),
+        "linear": extras.get("linear"),
+        "blend": extras.get("blend"),
     }
 
 
@@ -162,7 +167,8 @@ def fit_and_save_extras(alpha, train: pd.DataFrame, labels: pd.DataFrame, params
     alpha.fit_extras(train, labels, params, model)
     extras = {"ridge": model.get("ridge"), "regime_v4": model["regime_v4"], "rank_models": [],
               "turnover_estimates": model.get("turnover_estimates"),
-              "model_smoothing_span": model.get("model_smoothing_span")}
+              "model_smoothing_span": model.get("model_smoothing_span"),
+              "linear": model.get("linear"), "blend": model.get("blend")}
     for name, fitted in (model.get("rank") or {}).items():
         file_name = f"rank_{name}.txt"
         save_booster(fitted.booster_, model_dir / file_name)
@@ -245,7 +251,9 @@ def main(argv: list[str] | None = None) -> int:
         skipped: dict[str, int] = {}
         fitted_models: dict[str, object] = {}
         # Per-job LGBM fits must not also fit the extras (ridge / rank / auto span): done once below.
-        lgbm_only = dict(params, ensemble_weights=dict(weights, ridge=0.0, rank=0.0), turnover_control="off")
+        lgbm_only = dict(params, ensemble_weights=dict(weights, ridge=0.0, rank=0.0, linear=0.0),
+                         turnover_control="off",
+                         blend_learning=dict(params.get("blend_learning") or {}, enabled=False))
         if selection is not None:  # pass 2 per job: train on the selected columns, never re-select
             lgbm_only.update(feature_top_k=None, model_features=list(columns))
         for i, (k, seed) in enumerate(jobs, start=1):
@@ -285,7 +293,9 @@ def main(argv: list[str] | None = None) -> int:
         extras["sample_decay"] = alpha.decay_summary(weight, params) if weight is not None else None
         prog.update(len(jobs) + 3, f"extras 完了 ridge={bool(extras.get('ridge'))} "
                     f"rank={len(extras.get('rank_models', []))} span={params.get('model_smoothing_span')} "
-                    f"({time.time() - t0:.0f}s)", turnover_estimates=extras.get("turnover_estimates"))
+                    f"linear={bool(extras.get('linear'))} blend={bool(extras.get('blend'))} "
+                    f"({time.time() - t0:.0f}s)", turnover_estimates=extras.get("turnover_estimates"),
+                    blend=extras.get("blend"))
         meta = build_meta(alpha, strategy_dir, config, params, horizons, seeds, columns, train, labels,
                           models, skipped, history_start, config_hash, extras)
         write_json_atomic(strategy_dir / META_NAME, meta)
