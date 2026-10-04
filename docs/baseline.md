@@ -85,7 +85,8 @@ P2 の alpha_v2 を実データで検証した（既定構成 = +1.879 で v1 �
 
 | 構成 | Train OOS | Valid Sharpe | 回転率 | グロス/コスト | RankIC |
 |---|---|---|---|---|---|
-| **v4 S5（現行 config: K1 + ridge0.6 + model_weight 0.25 + span 20）** | **+2.124** | **+0.803** | 0.0133 | +3.27% / 0.33% | +0.0075 |
+| **v5 size_pure w2.5（現行 config: v4/S5 + size項再配合）** | **+2.286** | **+1.215** | 0.0109 | +4.37% / 0.27% | +0.0076 |
+| v4 S5（旧: K1 + ridge0.6 + model_weight 0.25 + span 20） | +2.124 | +0.803 | 0.0133 | +3.27% / 0.33% | +0.0075 |
 | v3 K1（旧候補: I1 + model_smoothing_span 10） | +2.039 | +0.759 | 0.0161 | +3.39% / 0.41% | +0.0079 |
 | v1（旧暫定提出） | +1.993 | +0.754 | 0.0169 | +3.42% / 0.43% | +0.0084 |
 | v2 I1 | +2.084 | +0.747 | 0.0216 | +3.47% / 0.54% | +0.0081 |
@@ -140,6 +141,37 @@ P2 の alpha_v2 を実データで検証した（既定構成 = +1.879 で v1 �
   - OFF 既定でのビット一致は合成データで確認（selftest_p7: S5/K1/S5+rank/S5+regime_mix の4構成で max|diff|=0）。
     実データでも P7 反映後の Valid は +0.8030（回転率 0.0133）で v4/S5 と同一（`work/reports/improve3_valid.json`）。
   - selftest_p7_pipeline（全部 ON の train_v2 → meta → submission 一貫性）OK、truncation OK、lookahead 静的・runtime OK。
+
+#### ローカル採用: size 項の再配合（v5、2026-10-04）
+
+v4/S5 は Valid で size/流動性の頑健なプレミアムを取り切れていない疑いがあった（配布 sample02 は pure size で
+Train +1.94 / Valid +1.18。単独 size ブロックは Valid +0.847 で、illiq60/logturn60 の等ウェイト混合が
+Valid で薄まる）。**コード変更なし・config の blocks 上書きのみ**で size 項を再配合した:
+
+- `params.blocks = {"size_pure": {"logsize": -1.0}, value/quality/lowrisk は v1 のまま}`
+  （旧 `size` ブロック `{logsize -1, illiq60 +1, logturn60 -1}` を置き換え）
+- `params.block_weights = {"size_pure": 2.5, "value": 0.5, "quality": 0.5, "lowrisk": 0.3}`
+- Ridge は新 4 ブロックで再学習（Train のみ）。LGBM は特徴量ベースで不変。
+
+探索（すべて実測、`work/reports/size_grid*.json/md`）:
+
+| 段階 | 内容 | 結果 |
+|---|---|---|
+| size_grid / grid2 | 既存 size ブロックの weight 増（1.5〜3.0）と model_weight 併用 | Valid +0.87 まで改善するが OOS は +2.04 前後へ低下。採用条件（OOS > +2.124）に届かず |
+| size_grid3b | 素の z(-logsize) / z(rank(-logsize)) 項を per-fold EWMA で正確に再評価 | OOS/Valid 同時改善（rank 版 w2.0: OOS +2.238 / Valid +1.064） |
+| walkforward（blocks 上書き + Ridge 再学習） | size_pure weight 1.5 / 2.0 / 2.5 / 3.0 | OOS +2.2801 / +2.2833 / **+2.2857** / +2.2248。OOS 最大の **w2.5 を採用** |
+
+採用の実測（`work/reports/size_pure_w25.json` / `size_pure_w25_valid.json`）:
+
+- Train OOS **+2.2857**（回転率 0.0128、年別: 2010 +1.75 / 2011 +2.83 / 2012 +0.73 / 2013 +2.67 / 2014 +2.01 / 2015 +3.91）
+- Valid **+1.2150**（回転率 0.0109、コスト 0.27%、グロス +4.37%、maxDD −3.91%、勝率 54.4%、RankIC +0.0076）
+- Valid 年別: 2016 +2.65 / 2017 +3.53 / 2018 +1.54 / 2019 +1.87 / 2020 −0.84 / 2021 +0.78 /
+  2022 +2.30 / 2023 +1.94 / 2024 +0.83 / 2025 +0.78 / 2026 +0.17
+  （分位 Q1 −0.36 / Q2 −0.18 / Q3 +0.15 / Q4 +1.20 / Q5 +4.12 bp/日）
+- 検証: train_v2 → score（--guard）一致、lookahead 静的・runtime OK、truncation OK。
+- 注意: 2020 は −0.39 → −0.84 と悪化（それ以外の年はほぼ改善）。ロールバックは
+  `work/improve3_cfgs/walkforward_config_v4s5_backup.json` を live config に戻して train_v2 再実行。
+- **第一目標（Valid +1.2）達成。**次は +1.5 を目指す。
 
 ### Valid 実測（2016-04-01 〜 2026-07-31）
 

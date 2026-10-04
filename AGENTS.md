@@ -13,7 +13,11 @@
   v0 は 1 セッション 1〜3 メッセージ、1 メッセージ 25 分、fast モード対応。
   v0 は入力データを持たない前提で、実行・計測はローカルで行う。
 - **環境**: `.venv`（Python 3.13 + 配布固定 5 パッケージ。配布要件は 3.11 だがバージョン同一のため等価。ただし lightgbm は実採点環境に合わせ **4.1.0**）。
-- **現状**: `strategies/v0_multifactor` に v4/S5 採用版（K1 + Ridge アンサンブル ridge0.6 + model_weight 0.25 + model_smoothing_span 20）まで実装・検証済み（Train OOS +2.1240 / Valid +0.8030 / Valid 回転率 0.0133 / コスト 0.33%/年）。S5（P5: ensemble / slowdown / regime_v4）受領・反映済み。提出候補は v4/S5（旧候補は v3/K1、旧暫定提出は v1）。Valid +1.2 は未達。
+- **現状**: `strategies/v0_multifactor` に **v5 採用版**（v4/S5 + size 項の再配合: `blocks` を明示上書きし
+  `size_pure {"logsize": -1}` を weight 2.5 で追加、旧 size ブロック廃止。コード変更なし・config のみ）。
+  実測 **Train OOS +2.2857 / Valid +1.2150 / Valid 回転率 0.0109（コスト 0.27%/年）**。
+  P7（新ブロック・ロバスト化）は受領・検収済みだが全候補不採用。**第一目標 Valid +1.2 は達成**、第二目標 +1.5 は未達。
+  提出候補は v5（旧候補は v4/S5、旧暫定提出は v1）。詳細は `CHANGELOG_v5_size_pure.md` と `docs/baseline.md`。
 
 ## 2. ファイルマップ
 
@@ -92,7 +96,14 @@
    はすべて OK。walkforward 基準 +2.1240 を再現後、8候補を実測するもすべて基準未達で不採用
    （最大 topk25 +2.0929、詳細は `docs/baseline.md` と CHANGELOG §7）。**提出候補は v4/S5 のまま**。
    実測 JSON は `work/reports/improve3_wf_*.json` / `improve3_valid.json`。
-4. 提出判断: 現行 v4/S5 で提出するなら P6（`v0/messages/S6_初回メッセージ.md` 実測記入済み）。
+4. **size 項の再配合をローカル採用（2026-10-04、v5）**: sample02（pure size: Train +1.94 / Valid +1.18）の
+   知見から size 項を再検証。既存 size ブロックの weight 増は OOS が低下する一方、素の `z(rank(-logsize))`
+   項は OOS/Valid を同時に改善した。`blocks` を明示上書き（`size_pure: {"logsize": -1}` + v1 の
+   value/quality/lowrisk）し weight 2.5 で walkforward が **Train +2.2857 / Valid +1.2150 / 回転率 0.0109**。
+   w1.5〜3.0 の OOS カーブ最大が w2.5（コード変更なし・config のみ。`CHANGELOG_v5_size_pure.md`、
+   実測は `work/reports/size_grid*.json` / `size_pure_w*.json`）。**第一目標 Valid +1.2 達成**。
+   ロールバックは `work/improve3_cfgs/walkforward_config_v4s5_backup.json`。
+5. 提出判断: 現行 v5 で提出するなら P6（`v0/messages/S6_初回メッセージ.md` を最新値に更新して送信）。
    `python tools/make_zip.py --name v0_multifactor --score` で zip 採点を確認。
-5. push / 提出 zip 作成はユーザーの明示指示があった場合のみ実行する。
+6. push / 提出 zip 作成はユーザーの明示指示があった場合のみ実行する。
 

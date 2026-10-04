@@ -1,7 +1,7 @@
 {
   "strategy": "v0_multifactor",
   "version": "alpha_v2",
-  "created_at": "2026-10-04 14:30:03",
+  "created_at": "2026-10-04 21:20:05",
   "model_dir": "models_v2",
   "model_files": [
     "lgbm_k126_s0.txt",
@@ -127,13 +127,12 @@
     "size": 1.0,
     "value": 0.5,
     "quality": 0.5,
-    "lowrisk": 0.3
+    "lowrisk": 0.3,
+    "size_pure": 2.5
   },
   "blocks": {
-    "size": {
-      "logsize": -1.0,
-      "illiq60": 1.0,
-      "logturn60": -1.0
+    "size_pure": {
+      "logsize": -1.0
     },
     "value": {
       "bp": 1.0,
@@ -172,7 +171,28 @@
     "sector_neutral": true,
     "sector_weight": 0.5,
     "block_set": "v1",
-    "blocks": null,
+    "blocks": {
+      "size_pure": {
+        "logsize": -1.0
+      },
+      "value": {
+        "bp": 1.0,
+        "sp": 1.0,
+        "ep_f": 1.0,
+        "ep_a": 1.0,
+        "cfy": 1.0,
+        "div_y": 1.0
+      },
+      "quality": {
+        "roe": 1.0,
+        "cfo_ta": 1.0,
+        "eq_ratio": 1.0
+      },
+      "lowrisk": {
+        "beta": -1.0,
+        "vol60": -1.0
+      }
+    },
     "sector_rank_blocks": [
       "size",
       "value"
@@ -182,7 +202,8 @@
       "size": 1.0,
       "value": 0.5,
       "quality": 0.5,
-      "lowrisk": 0.3
+      "lowrisk": 0.3,
+      "size_pure": 2.5
     },
     "fill_missing_blocks": false,
     "regime_mix": false,
@@ -271,7 +292,9 @@
     "turnover_cap": 0.017,
     "turnover_control": "off",
     "turnover_window": 250,
-    "slow_profile": null
+    "slow_profile": null,
+    "sample_decay_halflife": null,
+    "feature_top_k": null
   },
   "training_rows": 749860,
   "training_from": "2008-11-04",
@@ -286,7 +309,7 @@
   },
   "skipped": {},
   "history_start": "2004-01-01",
-  "config_sha256_16": "1539e0c0ab77c177",
+  "config_sha256_16": "19327abea85db416",
   "versions": {
     "lightgbm": "4.1.0",
     "pandas": "3.0.3"
@@ -298,23 +321,23 @@
   },
   "ridge": {
     "columns": [
-      "size",
+      "size_pure",
       "value",
       "quality",
       "lowrisk"
     ],
     "coef": {
       "k126": [
-        0.00023132193646738312,
-        -3.5305296693944154e-05,
-        0.00012681518572193204,
-        2.5331744195866385e-05
+        0.0002614796200681833,
+        -4.8070097204638414e-05,
+        0.00012905212727797882,
+        4.007753275024808e-05
       ],
       "k250": [
-        0.00022595391336019524,
-        -5.3339995620961304e-05,
-        8.672684739512244e-05,
-        5.8896670536790006e-05
+        0.00026305738394261763,
+        -6.630678360925249e-05,
+        8.851710516625013e-05,
+        7.550505969557767e-05
       ]
     },
     "intercept": {
@@ -326,10 +349,8 @@
       "k250": 692164
     },
     "blocks": {
-      "size": {
-        "logsize": -1.0,
-        "illiq60": 1.0,
-        "logturn60": -1.0
+      "size_pure": {
+        "logsize": -1.0
       },
       "value": {
         "bp": 1.0,
@@ -355,5 +376,7 @@
     "vol_threshold": 0.010196659527719022
   },
   "turnover_cap": 0.017,
-  "turnover_estimates": null
+  "turnover_estimates": null,
+  "feature_selection": null,
+  "sample_decay": null
 }

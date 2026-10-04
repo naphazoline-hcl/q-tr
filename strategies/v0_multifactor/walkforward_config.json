@@ -20,6 +20,12 @@
     "sector_neutral": true,
     "sector_weight": 0.5,
     "block_set": "v1",
+    "blocks": {
+      "size_pure": {"logsize": -1.0},
+      "value": {"bp": 1.0, "sp": 1.0, "ep_f": 1.0, "ep_a": 1.0, "cfy": 1.0, "div_y": 1.0},
+      "quality": {"roe": 1.0, "cfo_ta": 1.0, "eq_ratio": 1.0},
+      "lowrisk": {"beta": -1.0, "vol60": -1.0}
+    },
     "sector_rank_blocks": ["size", "value"],
     "sector_min_count": 3,
     "fill_missing_blocks": false,
@@ -29,7 +35,7 @@
       "vol_quantile": 0.5,
       "expansion_block_weights": {"size": 0.5, "value": 0.25, "quality": 0.5, "lowrisk": 0.3}
     },
-    "block_weights": {"size": 1.0, "value": 0.5, "quality": 0.5, "lowrisk": 0.3},
+    "block_weights": {"size_pure": 2.5, "value": 0.5, "quality": 0.5, "lowrisk": 0.3},
     "model_params": {
       "objective": "regression",
       "n_estimators": 350,
