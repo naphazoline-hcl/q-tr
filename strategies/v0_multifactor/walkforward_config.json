@@ -7,13 +7,27 @@
   "smoothing_span": 5,
   "params": {
     "seeds": [0, 1, 2],
+    "label_clip": 0.05,
+    "label_min_frac": 0.5,
+    "label_transform": "rank",
+    "min_label_days": 100,
+    "model_features": "v1",
+    "drop_features": [],
+    "horizon_combine": "z",
     "model_weight": 0.5,
-    "block_weights": {
-      "size": 1.0,
-      "value": 0.5,
-      "quality": 0.5,
-      "lowrisk": 0.3
+    "sector_neutral": false,
+    "sector_weight": 0.5,
+    "block_set": "v1",
+    "sector_rank_blocks": [],
+    "sector_min_count": 3,
+    "fill_missing_blocks": false,
+    "regime_mix": false,
+    "regime": {
+      "consumer_z_min": 0.0,
+      "vol_quantile": 0.5,
+      "expansion_block_weights": {"size": 0.5, "value": 0.25, "quality": 0.5, "lowrisk": 0.3}
     },
+    "block_weights": {"size": 1.0, "value": 0.5, "quality": 0.5, "lowrisk": 0.3},
     "model_params": {
       "objective": "regression",
       "n_estimators": 350,
@@ -25,6 +39,7 @@
       "colsample_bytree": 0.7,
       "reg_lambda": 1.0,
       "max_bin": 127,
+      "n_jobs": -1,
       "verbose": -1
     }
   }
