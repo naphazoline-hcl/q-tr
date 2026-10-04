@@ -1,0 +1,230 @@
+{
+  "strategy": "v0_multifactor",
+  "version": "alpha_v2",
+  "created_at": "2026-10-04 11:31:24",
+  "model_dir": "models_v2",
+  "model_files": [
+    "lgbm_k126_s0.txt",
+    "lgbm_k126_s1.txt",
+    "lgbm_k126_s2.txt",
+    "lgbm_k250_s0.txt",
+    "lgbm_k250_s1.txt",
+    "lgbm_k250_s2.txt"
+  ],
+  "models": [
+    {
+      "file": "lgbm_k126_s0.txt",
+      "horizon": "k126",
+      "seed": 0
+    },
+    {
+      "file": "lgbm_k126_s1.txt",
+      "horizon": "k126",
+      "seed": 1
+    },
+    {
+      "file": "lgbm_k126_s2.txt",
+      "horizon": "k126",
+      "seed": 2
+    },
+    {
+      "file": "lgbm_k250_s0.txt",
+      "horizon": "k250",
+      "seed": 0
+    },
+    {
+      "file": "lgbm_k250_s1.txt",
+      "horizon": "k250",
+      "seed": 1
+    },
+    {
+      "file": "lgbm_k250_s2.txt",
+      "horizon": "k250",
+      "seed": 2
+    }
+  ],
+  "features": [
+    "r1",
+    "rev1",
+    "rev_oc",
+    "rev_co",
+    "mret",
+    "aret",
+    "rcc3",
+    "rcc5",
+    "rcc10",
+    "rcc20",
+    "rcc60",
+    "rcc120",
+    "rcc250",
+    "mom",
+    "oc20",
+    "co20",
+    "vol20",
+    "vol60",
+    "dvol60",
+    "range20",
+    "range1",
+    "clv1",
+    "logturn20",
+    "logturn60",
+    "illiq20",
+    "illiq60",
+    "volratio",
+    "logsize",
+    "bp",
+    "ep_f",
+    "ep_a",
+    "sp",
+    "cfy",
+    "div_y",
+    "roe",
+    "cfo_ta",
+    "eq_ratio",
+    "op_margin",
+    "prof_margin",
+    "sales_yoy",
+    "profit_yoy",
+    "eps_fwd_chg",
+    "eps_fwd_yoy",
+    "cf_yoy",
+    "disc_days",
+    "scale",
+    "sector17",
+    "sector33",
+    "market",
+    "margin",
+    "beta"
+  ],
+  "sector_features": [
+    "sector17",
+    "sector33",
+    "market",
+    "margin"
+  ],
+  "horizons": [
+    126,
+    250
+  ],
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "label_clip": 0.05,
+  "label_transform": "raw",
+  "label_min_frac": 0.5,
+  "smoothing_span": 5,
+  "model_weight": 0.5,
+  "horizon_combine": "z",
+  "sector_neutral": true,
+  "sector_weight": 0.5,
+  "regime_mix": false,
+  "regime": {
+    "vol_threshold": 0.00983702577650547
+  },
+  "block_weights": {
+    "size": 1.0,
+    "value": 0.5,
+    "quality": 0.5,
+    "lowrisk": 0.3
+  },
+  "blocks": {
+    "size": {
+      "logsize": -1.0,
+      "illiq60": 1.0,
+      "logturn60": -1.0
+    },
+    "value": {
+      "bp": 1.0,
+      "sp": 1.0,
+      "ep_f": 1.0,
+      "ep_a": 1.0,
+      "cfy": 1.0,
+      "div_y": 1.0
+    },
+    "quality": {
+      "roe": 1.0,
+      "cfo_ta": 1.0,
+      "eq_ratio": 1.0
+    },
+    "lowrisk": {
+      "beta": -1.0,
+      "vol60": -1.0
+    }
+  },
+  "params": {
+    "seeds": [
+      0,
+      1,
+      2
+    ],
+    "label_clip": 0.05,
+    "label_min_frac": 0.5,
+    "label_transform": "raw",
+    "min_label_days": 100,
+    "model_features": "v1",
+    "drop_features": [],
+    "horizon_combine": "z",
+    "model_weight": 0.5,
+    "sector_neutral": true,
+    "sector_weight": 0.5,
+    "block_set": "v1",
+    "blocks": null,
+    "sector_rank_blocks": [
+      "size",
+      "value"
+    ],
+    "sector_min_count": 3,
+    "block_weights": {
+      "size": 1.0,
+      "value": 0.5,
+      "quality": 0.5,
+      "lowrisk": 0.3
+    },
+    "fill_missing_blocks": false,
+    "regime_mix": false,
+    "regime": {
+      "consumer_z_min": 0.0,
+      "vol_quantile": 0.5,
+      "expansion_block_weights": {
+        "size": 0.5,
+        "value": 0.25,
+        "quality": 0.5,
+        "lowrisk": 0.3
+      }
+    },
+    "model_params": {
+      "objective": "regression",
+      "n_estimators": 350,
+      "learning_rate": 0.03,
+      "num_leaves": 31,
+      "min_child_samples": 300,
+      "subsample": 0.8,
+      "subsample_freq": 1,
+      "colsample_bytree": 0.7,
+      "reg_lambda": 1.0,
+      "max_bin": 127,
+      "n_jobs": -1,
+      "verbose": -1
+    }
+  },
+  "training_rows": 749860,
+  "training_from": "2008-11-04",
+  "training_to": "2015-09-25",
+  "label_rows": {
+    "k126": 748595,
+    "k250": 692164
+  },
+  "label_to": {
+    "k126": "2015-09-25",
+    "k250": "2015-03-25"
+  },
+  "skipped": {},
+  "history_start": "2004-01-01",
+  "config_sha256_16": "fd9f54501804a7db",
+  "versions": {
+    "lightgbm": "4.1.0",
+    "pandas": "3.0.3"
+  }
+}

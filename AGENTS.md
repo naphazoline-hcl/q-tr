@@ -13,7 +13,7 @@
   v0 は 1 セッション 1〜3 メッセージ、1 メッセージ 25 分、fast モード対応。
   v0 は入力データを持たない前提で、実行・計測はローカルで行う。
 - **環境**: `.venv`（Python 3.13 + 配布固定 5 パッケージ。配布要件は 3.11 だがバージョン同一のため等価。ただし lightgbm は実採点環境に合わせ **4.1.0**）。
-- **現状**: `strategies/v0_multifactor`（仮提出 robust_multifactor のコピー、Valid +0.754）が出発点。
+- **現状**: `strategies/v0_multifactor` に v2 一式（alpha_features / alpha_v2 / train_v2 / submission）を実装・検証済み（Train OOS +2.084 / Valid +0.747、config は I1）。暫定提出は v1（Valid +0.754）のまま。
 
 ## 2. ファイルマップ
 
@@ -79,9 +79,10 @@
 
 ## 6. 次の作業
 
-1. **ベースライン計測の完了待ち**: `work/reports/wf_baseline_v1.json`（6フォールド Train OOS。
-   2015単独では Sharpe +4.86。全体では文書値の約+2.4になる見込み）。
-2. **S1 の送信**: v0/計画.md §2 の順で P1 から開始。`{...}` 欄は実測で埋める。
-3. P1 の local 検収（truncation + selftest）→ S2 へ。
+1. **S4 の送信**: `v0/messages/S4_初回メッセージ.md`（実測記入済み）。P4 の改善対象は
+   `strategies/v0_multifactor/alpha_v2.py` + `walkforward_config.json`。検証は `--module alpha_v2` を付ける。
+2. 受領後: py_compile → walkforward（Train OOS、基準 +2.084）→ train_v2 → score valid（基準 +0.747）→
+   lookahead --runtime。
+3. 現時点の提出候補は **v1（Valid +0.754）**。Train OOS と Valid の両方で v1 を上回った時点で差し替える。
 4. Valid +1.2 超えで中間報告、+1.5 で最終レポート（P6）→ 提出 zip。
 
