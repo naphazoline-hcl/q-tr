@@ -20,6 +20,14 @@ improve2（v3 -> v4 候補、CHANGELOG_v3v4.md）で追加したパラメータ�
 - turnover_cap / turnover_control / turnover_window / slow_profile: 回転率上限の宣言と、
   モデル項 EWMA span（5 / 10 / 20）とラベル設計のセット選択（slowdown.py）。
 
+improve3（v4 -> v5 候補、CHANGELOG_v4v5.md）で追加したもの（既定値なら v4/S5 とビット一致）:
+- block_set "v3": v1 の 4 ブロック + momentum / revision / liquidity。block_weights の既定には入れない
+  （直接合成は重み 0）。Ridge は全ブロック z を説明変数にするので、v3 にすると新ブロックは Ridge 経由で効く。
+- sample_decay_halflife（None | 営業日数）: 学習行の重み 0.5 ** (経過営業日 / halflife)。経過は学習行の
+  最終 Date から数える（学習期間内のみ）。LGBM / Ridge / rank モデルの sample_weight に同じ重みを渡す。
+- feature_top_k（None | 整数）: 2 パス学習。1 パス目の (horizon, seed) LGBM の gain 平均順位で上位 k 列
+  （SECTOR_COLUMNS は常に残す）を選び、2 パス目でその列だけを学習する。result["columns"] = 選択列。
+
 API（docs/coding_conventions.md §2）::
 
     build_features(splits=("train",), start=None, end=None) -> DataFrame
@@ -109,6 +117,16 @@ BLOCK_SETS = {
         "lowrisk": {"beta": -1.0, "vol60": -1.0},
     },
 }
+# improve3 (P7 A): v1's four blocks unchanged + three new alpha sources. Default block_weights give
+# them weight 0, so they only enter through the Ridge (which regresses on every block z).
+# Signs follow the alpha_features.py formulas (rationale in CHANGELOG_v4v5.md).
+BLOCK_SETS["v3"] = {
+    **{block: dict(signs) for block, signs in BLOCK_SETS["v1"].items()},
+    "momentum": {"rcc120": +1.0, "rcc250": +1.0, "mom": +1.0, "res250": +1.0},
+    "revision": {"eps_revision": +1.0, "opprofit_revision": +1.0, "eps_fwd_chg": +1.0,
+                 "sales_yoy_acc": +1.0, "op_margin_yoy_chg": +1.0},
+    "liquidity": {"illiq20": +1.0, "illiq60": +1.0, "logturn20": -1.0, "logturn60": -1.0},
+}
 
 DEFAULT_PARAMS = {
     "seeds": [0, 1, 2],
@@ -124,7 +142,7 @@ DEFAULT_PARAMS = {
     "model_smoothing_span": 1,  # <= 1: off (I1). Per-code EWMA of the raw model prediction.
     "sector_neutral": True,
     "sector_weight": 0.5,
-    "block_set": "v2",  # v2 | v1
+    "block_set": "v2",  # v2 | v1 | v3 (v1 + momentum / revision / liquidity, P7)
     "blocks": None,  # explicit {block: {column: sign}} overrides block_set
     "sector_rank_blocks": ["size", "value"],
     "sector_min_count": 3,
@@ -148,6 +166,9 @@ DEFAULT_PARAMS = {
     "turnover_control": "off",  # off | auto (fit_model picks the model EWMA span from slowdown.SPAN_CHOICES)
     "turnover_window": 250,  # training-tail days used by the auto span estimate
     "slow_profile": None,  # None | span5 | span10 | span20 (span + label design, slowdown.SLOW_PROFILES)
+    # improve3 (P7 B). None = off (bit-identical to v4/S5).
+    "sample_decay_halflife": None,  # None | trading days: row weight 0.5 ** (age / halflife), age <= 0 never
+    "feature_top_k": None,  # None | int: 2-pass LGBM, keep the top-k gain columns (+ every SECTOR_COLUMN)
 }
 DEFAULT_LABEL_CLIP = 0.05
 
@@ -367,12 +388,12 @@ def fit_model(features: pd.DataFrame, labels: pd.DataFrame, params: dict | None 
 
     ラベルのある日付が min_label_days 未満のホライズンは学習しない（skipped に記録）。
     1本も学習できなければ models は空で、predict_signal はブロック合成だけを返す。
+    P7: sample_decay_halflife があれば全モデルに時間減衰の sample_weight（result["sample_decay"] に要約）。
+    feature_top_k があれば 1 パス目（全列）で列を選び、2 パス目（選択列）のモデルと選択列を返す
+    （result["feature_selection"]。選択列が全列と同じなら 2 パス目は省略）。
     """
     config = merged_params(params)
-    model_params = dict(config["model_params"])
-    model_params.pop("random_state", None)
-    model_params.setdefault("n_jobs", -1)
-    clip = float(config["label_clip"])
+    model_params = _lgbm_params(config)
     columns = model_columns(features, config)
     result = {
         "version": "alpha_v2",
@@ -383,21 +404,60 @@ def fit_model(features: pd.DataFrame, labels: pd.DataFrame, params: dict | None 
         "regime": _fit_regime(features, config),
         "regime_v4": regime_v4.fit_thresholds(features, config["regime_v4"]),
     }
-    labels = labels.reindex(features.index)
+    labels = _profile_labels(labels.reindex(features.index), config, result)
+    if len(features) == 0:
+        return result
+    ranked = rank_for_model(features, columns)
+    weight = sample_weights(features.index, config)
+    labels_for_lgbm = _lgbm_labels(labels, config)
+    boosters = _fit_boosters(ranked, labels_for_lgbm, features, config, model_params, columns, weight, result)
+    if config.get("feature_top_k") is not None:
+        result["feature_selection"] = select_columns(boosters, columns, config["feature_top_k"])
+        selected = result["feature_selection"]["columns"]
+        if selected != columns:  # pass 2: final models (and the rank model) on the selected columns only
+            columns, ranked = selected, ranked[selected]
+            boosters = _fit_boosters(ranked, labels_for_lgbm, features, config, model_params, columns, weight, result)
+            result["columns"] = columns
+    result["models"] = boosters
+    if weight is not None:
+        result["sample_decay"] = decay_summary(weight, config)
+    fit_extras(features, labels, config, result, ranked=ranked)
+    return result
+
+
+def _lgbm_params(config: dict) -> dict:
+    model_params = dict(config["model_params"])
+    model_params.pop("random_state", None)
+    model_params.setdefault("n_jobs", -1)
+    return model_params
+
+
+def _profile_labels(labels: pd.DataFrame, config: dict, result: dict) -> pd.DataFrame:
+    """slow_profile のホライズン指定があれば、それ以外のラベル列を落として skipped に記録する。"""
     profile_horizons = config.get("profile_horizons")
     if profile_horizons:
         for horizon in [h for h in labels.columns if h not in profile_horizons]:
             result["skipped"][horizon] = "slow_profile"
         labels = labels[[h for h in labels.columns if h in profile_horizons]]
-    if len(features) == 0:
-        return result
-    ranked = rank_for_model(features, columns)
-    categorical = [c for c in columns if c in SECTOR_COLUMNS]
+    return labels
+
+
+def _lgbm_labels(labels: pd.DataFrame, config: dict) -> pd.DataFrame:
     if ensemble.ensemble_weights(config)["lgbm"] == 0.0:
-        labels_for_lgbm = labels.iloc[:, :0]  # LGBM switched off: skip its training entirely
-    else:
-        labels_for_lgbm = labels
-    for horizon in labels_for_lgbm.columns:
+        return labels.iloc[:, :0]  # LGBM switched off: skip its training entirely
+    return labels
+
+
+def _fit_boosters(ranked: pd.DataFrame, labels: pd.DataFrame, features: pd.DataFrame, config: dict,
+                  model_params: dict, columns: list[str], weight: np.ndarray | None, result: dict) -> dict:
+    """(horizon, seed) ごとの LGBMRegressor（horizon -> seed の順 = model_prediction の平均順）。
+
+    label_days / skipped を result に記録する。weight=None（既定）なら sample_weight なしの従来の学習と同一。
+    """
+    clip = float(config["label_clip"])
+    categorical = [c for c in columns if c in SECTOR_COLUMNS]
+    boosters: dict[str, lgb.LGBMRegressor] = {}
+    for horizon in labels.columns:
         y = transform_label(labels[horizon].clip(-clip, clip), features, config["label_transform"])
         mask = y.notna().to_numpy()
         n_days = int(_dates(y)[mask].nunique())
@@ -405,12 +465,101 @@ def fit_model(features: pd.DataFrame, labels: pd.DataFrame, params: dict | None 
         if n_days < int(config["min_label_days"]):
             result["skipped"][horizon] = n_days
             continue
+        # LightGBM 4.1.0 + numpy 2: weights must already be contiguous float32 (no implicit copy).
+        w = None if weight is None else np.ascontiguousarray(weight[mask], dtype=np.float32)
         for seed in config["seeds"]:
             booster = lgb.LGBMRegressor(random_state=int(seed), **model_params)
-            booster.fit(ranked.loc[mask], y.loc[mask], categorical_feature=categorical)
-            result["models"][f"{horizon}_s{seed}"] = booster
-    fit_extras(features, labels, config, result, ranked=ranked)
-    return result
+            booster.fit(ranked.loc[mask], y.loc[mask], sample_weight=w, categorical_feature=categorical)
+            boosters[f"{horizon}_s{seed}"] = booster
+    return boosters
+
+
+# ------------------------------------------------- improve3 (P7 B): robustness
+
+
+def sample_weights(index: pd.Index, config: dict) -> np.ndarray | None:
+    """学習行の時間減衰重み w = 0.5 ** (経過日数 / sample_decay_halflife)。None（既定）なら None = 等ウェイト。
+
+    経過日数 = 学習行の最終 Date からの営業日数（学習行自身の Date カレンダー上で数える。予測期間の
+    日付は見ない）。同一 Date の行は同じ重み（断面の相対関係は変えず、古い日付ほど軽くするだけ）。
+    """
+    halflife = config.get("sample_decay_halflife")
+    if halflife is None:
+        return None
+    halflife = float(halflife)
+    if not np.isfinite(halflife) or halflife <= 0.0:
+        raise ValueError(f"sample_decay_halflife must be None or a positive number of trading days: {halflife!r}")
+    codes, calendar = pd.factorize(index.get_level_values("Date"), sort=True)
+    age = (len(calendar) - 1 - codes).astype(np.float64)
+    return np.power(0.5, age / halflife)
+
+
+def decay_summary(weight: np.ndarray, config: dict) -> dict:
+    """ログ・meta 用の要約（重みの最小・平均と、実効的な行数の割合）。"""
+    if len(weight) == 0:
+        return {"halflife": float(config["sample_decay_halflife"]), "rows": 0}
+    return {"halflife": float(config["sample_decay_halflife"]), "rows": int(len(weight)),
+            "weight_min": round(float(weight.min()), 6), "weight_mean": round(float(weight.mean()), 6),
+            "effective_share": round(float(weight.sum() ** 2 / (weight ** 2).sum() / len(weight)), 4)}
+
+
+def _gain_importance(booster) -> pd.Series:
+    """sklearn ラッパー（booster_）と lgb.Booster の両方から gain importance（列名 index）。"""
+    core = getattr(booster, "booster_", booster)
+    gain = np.asarray(core.feature_importance(importance_type="gain"), dtype=np.float64)
+    return pd.Series(gain, index=_feature_names(booster))
+
+
+def select_columns(boosters: dict, columns: list[str], top_k) -> dict:
+    """1 パス目の LGBM（horizon x seed）から上位 top_k 列を選ぶ。返り値 "columns" は入力の列順のまま。
+
+    各モデルの gain を非カテゴリ列の合計で正規化 -> モデル内で降順の順位（同値は平均順位）->
+    horizon x seed で順位を平均 -> 平均順位が小さい順に top_k 列（同順位は平均シェアの大きい順 -> 入力順）。
+    SECTOR_COLUMNS（カテゴリ列）は順位の競争に入れず常に残す（top_k に数えない）。
+    1 パス目のモデルが無ければ（LGBM 重み 0・全ホライズン skip）選ばずに全列を返す。
+    """
+    top_k = int(top_k)
+    if top_k < 1:
+        raise ValueError(f"feature_top_k must be None or a positive integer: {top_k!r}")
+    candidates = [c for c in columns if c not in SECTOR_COLUMNS]
+    if not boosters:
+        return {"top_k": top_k, "columns": list(columns), "models": 0, "skipped": "no LGBM model in pass 1"}
+    shares, ranks = [], []
+    for booster in boosters.values():
+        gain = _gain_importance(booster).reindex(candidates).fillna(0.0)
+        total = float(gain.sum())
+        share = gain / total if total > 0.0 else gain * 0.0
+        shares.append(share)
+        ranks.append(share.rank(ascending=False, method="average"))
+    mean_share = pd.concat(shares, axis=1).mean(axis=1)
+    mean_rank = pd.concat(ranks, axis=1).mean(axis=1)
+    order = pd.DataFrame({"rank": mean_rank, "neg_share": -mean_share, "pos": np.arange(len(candidates))},
+                         index=candidates).sort_values(["rank", "neg_share", "pos"], kind="mergesort")
+    keep = set(order.index[:top_k])
+    return {
+        "top_k": top_k,
+        "columns": [c for c in columns if c in keep or c in SECTOR_COLUMNS],
+        "models": len(boosters),
+        "mean_rank": {c: round(float(mean_rank[c]), 3) for c in order.index},
+        "mean_gain_share": {c: round(float(mean_share[c]), 6) for c in order.index},
+    }
+
+
+def select_features(features: pd.DataFrame, labels: pd.DataFrame, params: dict | None = None) -> dict:
+    """feature_top_k の 1 パス目だけを行い、select_columns の結果を返す（train_v2.py 用）。
+
+    fit_model の内部と同じ列・ラベル・重み・seed で (horizon, seed) の LGBM を全列で学習する。
+    feature_top_k が None なら学習せず全列を返す。
+    """
+    config = merged_params(params)
+    columns = model_columns(features, config)
+    if config.get("feature_top_k") is None or len(features) == 0:
+        return {"top_k": None, "columns": columns, "models": 0}
+    scratch = {"skipped": {}, "label_days": {}}
+    labels = _lgbm_labels(_profile_labels(labels.reindex(features.index), config, scratch), config)
+    boosters = _fit_boosters(rank_for_model(features, columns), labels, features, config, _lgbm_params(config),
+                             columns, sample_weights(features.index, config), scratch)
+    return select_columns(boosters, columns, config["feature_top_k"])
 
 
 def fit_extras(features: pd.DataFrame, labels: pd.DataFrame, config: dict, model: dict,
@@ -423,11 +572,14 @@ def fit_extras(features: pd.DataFrame, labels: pd.DataFrame, config: dict, model
     clip = float(config["label_clip"])
     if len(features) == 0:
         return model
+    # P7 B: same time-decay weights as the LGBM (None = off). Rank uses model["columns"] = selected columns.
+    weight = sample_weights(features.index, config)
     if weights["ridge"] != 0.0:
         ridge_cfg = ensemble.merged_section(config, "ridge", ensemble.DEFAULT_RIDGE)
         ridge_config = dict(config, blocks=ridge_cfg["blocks"] or config.get("blocks"))
         blocks_z = {b: xsec_z(s).to_numpy(np.float64) for b, s in block_scores(features, ridge_config).items()}
-        model["ridge"] = ensemble.fit_ridge(ensemble.block_frame(blocks_z, features.index), labels, ridge_cfg, clip)
+        model["ridge"] = ensemble.fit_ridge(ensemble.block_frame(blocks_z, features.index), labels, ridge_cfg, clip,
+                                            sample_weight=weight)
         model["ridge"]["blocks"] = resolve_blocks(ridge_config)
     if weights["rank"] != 0.0:
         rank_cfg = ensemble.merged_section(config, "rank_model", ensemble.DEFAULT_RANK)
@@ -435,7 +587,8 @@ def fit_extras(features: pd.DataFrame, labels: pd.DataFrame, config: dict, model
         if ranked is None:
             ranked = rank_for_model(features, columns)
         categorical = [c for c in columns if c in SECTOR_COLUMNS]
-        model["rank"] = ensemble.fit_rank(ranked[columns], labels, rank_cfg, categorical, clip)
+        model["rank"] = ensemble.fit_rank(ranked[columns], labels, rank_cfg, categorical, clip,
+                                          sample_weight=weight)
     if str(config.get("turnover_control", "off")) == "auto":
         estimates = estimate_spans(features, model, config)
         model["turnover_estimates"] = estimates

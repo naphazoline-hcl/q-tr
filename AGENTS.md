@@ -84,11 +84,14 @@
    採用は mw025_ridge06_span20（Train +2.1240 / Valid +0.8030 / 回転率 0.0133）。コミット ffccd38（push 済み）。
 2. **P5 後のローカル探索も完了**（コミット 7c4ef36、push 未）: span 微調整・rank 併用・slow_profile を実測し、
    いずれも v4/S5 を上回らず不採用。詳細は `docs/baseline.md` の「P5 後のローカル追加探索」。
-3. **P7（改善3: 新ブロックとロバスト化）を作成済み・未送信**:
-   `v0/prompts/P7_改善3_新ブロックとロバスト化.md`（block_set v3 + sample_decay_halflife + feature_top_k）、
-   `v0/messages/S7_初回メッセージ.md`（実測記入済み）。**push してからユーザーが v0 に S7 を貼る。**
-   受領後は S5 と同じ検収フロー（展開→差分レビュー→py_compile→lookahead→selftest→walkforward→
-   sweep 拡張→train_v2→score→runtime→truncation→採用判断→docs/commit/push）。
+3. **P7（改善3: 新ブロックとロバスト化）は受領・検収済み（2026-10-04、不採用）**:
+   `v0/prompts/P7_改善3_新ブロックとロバスト化.md` / `v0/messages/S7_初回メッセージ.md` で送信し、
+   `work/s7_package/`（gitignore）に受領。`strategies/v0_multifactor/` に反映
+   （alpha_v2 / ensemble / train_v2 / submission + selftest_p7 / pipeline / bench_p7 /
+   CHANGELOG_v4v5 / REPORT_P7）。OFF 既定のビット一致・pipeline 一貫性・truncation・lookahead（静的/runtime）
+   はすべて OK。walkforward 基準 +2.1240 を再現後、8候補を実測するもすべて基準未達で不採用
+   （最大 topk25 +2.0929、詳細は `docs/baseline.md` と CHANGELOG §7）。**提出候補は v4/S5 のまま**。
+   実測 JSON は `work/reports/improve3_wf_*.json` / `improve3_valid.json`。
 4. 提出判断: 現行 v4/S5 で提出するなら P6（`v0/messages/S6_初回メッセージ.md` 実測記入済み）。
    `python tools/make_zip.py --name v0_multifactor --score` で zip 採点を確認。
 5. push / 提出 zip 作成はユーザーの明示指示があった場合のみ実行する。

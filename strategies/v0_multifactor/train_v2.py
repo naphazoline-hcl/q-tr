@@ -16,6 +16,12 @@
   Ridge の係数は meta_v2.json の "ridge"、rank モデルは models_v2/rank_<name>.txt（"rank_models"）。
   turnover_control=auto で選ばれた span は params.model_smoothing_span に書き戻す（提出側も同じ span）。
   slow_profile のホライズン指定があれば、そのホライズンの LGBM だけを学習する。
+- improve3（P7）: feature_top_k を設定すると、ジョブの前に alpha.select_features（全列・全 (k, seed) の
+  1 パス目）で列を選び、models_v2/feature_selection.json に保存する。各ジョブは選択列だけで学習し
+  （model_features=選択列・feature_top_k=None）、rank モデル・meta_v2.json の "features" も同じ選択列になる。
+  sample_decay_halflife は fit_model / fit_extras の内部で効く（学習行の最終 Date 基準、Train のみ）。
+  どちらも None（既定）なら学習・モデルは従来と同一（meta_v2.json には null の 2 キー
+  "feature_selection" / "sample_decay" が増えるだけ）。
 """
 
 from __future__ import annotations
@@ -35,6 +41,7 @@ import pandas as pd
 HERE = Path(__file__).resolve().parent
 MODEL_DIR_NAME = "models_v2"
 META_NAME = "meta_v2.json"
+SELECTION_NAME = "feature_selection.json"  # P7 feature_top_k: pass-1 result (reused by --resume)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -140,6 +147,9 @@ def build_meta(alpha, strategy_dir: Path, config: dict, params: dict, horizons: 
         "regime_v4": extras.get("regime_v4") or alpha.regime_v4.fit_thresholds(train, params["regime_v4"]),
         "turnover_cap": float(params.get("turnover_cap", float("nan"))),
         "turnover_estimates": extras.get("turnover_estimates"),
+        # P7 B (None when off). "features" above already holds the selected columns.
+        "feature_selection": extras.get("feature_selection"),
+        "sample_decay": extras.get("sample_decay"),
     }
 
 
@@ -158,6 +168,22 @@ def fit_and_save_extras(alpha, train: pd.DataFrame, labels: pd.DataFrame, params
         save_booster(fitted.booster_, model_dir / file_name)
         extras["rank_models"].append({"file": file_name, "name": name})
     return extras
+
+
+def load_or_select(alpha, train: pd.DataFrame, labels: pd.DataFrame, params: dict, model_dir: Path,
+                   config_hash: str, resume: bool) -> dict:
+    """P7 B feature_top_k の 1 パス目（alpha.select_features）。結果は models_v2/feature_selection.json に保存し、
+    --resume のときは設定ハッシュと学習行数が一致する保存結果を再利用する（選び直しで列が揺れないように）。"""
+    path = model_dir / SELECTION_NAME
+    if resume and path.exists():
+        cached = json.loads(path.read_text(encoding="utf-8"))
+        if cached.get("config_sha256_16") == config_hash and cached.get("training_rows") == int(len(train)):
+            print(f"[train_v2] reuse {path.name} (resume)", flush=True)
+            return cached
+    selection = alpha.select_features(train, labels, params)
+    selection.update(config_sha256_16=config_hash, training_rows=int(len(train)))
+    write_json_atomic(path, selection)
+    return selection
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -205,11 +231,23 @@ def main(argv: list[str] | None = None) -> int:
         prog.update(2, f"ラベル作成 完了 rows={len(train):,} label_rows={label_rows} ({time.time() - t0:.0f}s)")
         print(f"[train_v2] train rows={len(train):,} label_rows={label_rows} columns={len(columns)}", flush=True)
 
+        selection = None
+        if params.get("feature_top_k") is not None and jobs:
+            t0 = time.time()
+            selection = load_or_select(alpha, train, labels[[f"k{k}" for k in horizons]], params, model_dir,
+                                       config_hash, args.resume)
+            columns = list(selection["columns"])
+            prog.update(2, f"feature_top_k={params['feature_top_k']} 列選択 完了 columns={len(columns)} "
+                        f"({time.time() - t0:.0f}s)", selected=columns)
+            print(f"[train_v2] feature_top_k selected {len(columns)} columns ({time.time() - t0:.0f}s)", flush=True)
+
         models: list[dict] = []
         skipped: dict[str, int] = {}
         fitted_models: dict[str, object] = {}
         # Per-job LGBM fits must not also fit the extras (ridge / rank / auto span): done once below.
         lgbm_only = dict(params, ensemble_weights=dict(weights, ridge=0.0, rank=0.0), turnover_control="off")
+        if selection is not None:  # pass 2 per job: train on the selected columns, never re-select
+            lgbm_only.update(feature_top_k=None, model_features=list(columns))
         for i, (k, seed) in enumerate(jobs, start=1):
             horizon, name = f"k{k}", f"lgbm_k{k}_s{seed}.txt"
             path, step = model_dir / name, 2 + i
@@ -242,6 +280,9 @@ def main(argv: list[str] | None = None) -> int:
                                      fitted_models, model_dir)
         if extras.get("model_smoothing_span"):
             params["model_smoothing_span"] = int(extras["model_smoothing_span"])
+        extras["feature_selection"] = selection
+        weight = alpha.sample_weights(train.index, params)
+        extras["sample_decay"] = alpha.decay_summary(weight, params) if weight is not None else None
         prog.update(len(jobs) + 3, f"extras 完了 ridge={bool(extras.get('ridge'))} "
                     f"rank={len(extras.get('rank_models', []))} span={params.get('model_smoothing_span')} "
                     f"({time.time() - t0:.0f}s)", turnover_estimates=extras.get("turnover_estimates"))

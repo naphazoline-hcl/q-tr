@@ -8,6 +8,10 @@ improve2（P5）: model = ensemble.combine({lgbm, ridge, rank}, params.ensemble_
 meta_v2.json の係数（JSON）、rank モデルは models_v2/rank_*.txt。重みが 0 のモデルは読まない・計算しない
 （既定は lgbm のみ = K1 と同一）。regime_mix は meta_v2.json の学習時しきい値（regime / regime_v4）を使う。
 
+improve3（P7）: 推論の式は変えない。feature_top_k で学習した場合も meta_v2.json の "features"（= 選択列）を
+そのまま使い、LGBM / rank の列名・列順序の一致を従来どおり確認する（feature_selection.columns との一致も確認）。
+block_set "v3" は meta の "blocks" / ridge["blocks"] に凍結されたブロック定義で計算される。
+
 同梱物（Path(__file__).resolve().parent 基準）: meta_v2.json / models_v2/*.txt / alpha_v2.py /
 alpha_features.py / ensemble.py / regime_v4.py / slowdown.py。配布 parquet はベース名で相対読みする。
 
@@ -59,6 +63,10 @@ def load_meta() -> dict:
     missing = [key for key in required if key not in meta]
     if missing:
         raise KeyError(f"meta_v2.json に {missing} がありません（train_v2.py を再実行してください）")
+    selection = meta.get("feature_selection")  # P7 feature_top_k (null when off / older meta)
+    if selection and list(selection.get("columns") or []) != list(meta["features"]):
+        raise RuntimeError("meta_v2.json の feature_selection.columns と features が一致しません"
+                           "（train_v2.py を再実行してください）")
     return meta
 
 

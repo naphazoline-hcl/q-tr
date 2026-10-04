@@ -98,8 +98,13 @@ def block_frame(block_z: dict[str, np.ndarray], index: pd.Index) -> pd.DataFrame
     return pd.DataFrame(data, index=index)
 
 
-def fit_ridge(blocks: pd.DataFrame, labels: pd.DataFrame, cfg: dict, clip: float) -> dict:
-    """ホライズンごとに 1 本の Ridge（全学習期間のパネルをプールして時系列方向に係数を学習）。"""
+def fit_ridge(blocks: pd.DataFrame, labels: pd.DataFrame, cfg: dict, clip: float,
+              sample_weight: np.ndarray | None = None) -> dict:
+    """ホライズンごとに 1 本の Ridge（全学習期間のパネルをプールして時系列方向に係数を学習）。
+
+    sample_weight（P7 B、blocks.index と同じ行順、None = 従来どおり等ウェイト）を渡すと重み付き最小二乗。
+    重みは同一 Date 内で一定（時間減衰）なので、label_demean の同日平均は重みの有無で変わらない。
+    """
     out = {"columns": list(blocks.columns), "coef": {}, "intercept": {}, "rows": {}}
     for horizon in labels.columns:
         y = labels[horizon].reindex(blocks.index).astype(np.float64).clip(-clip, clip)
@@ -109,7 +114,8 @@ def fit_ridge(blocks: pd.DataFrame, labels: pd.DataFrame, cfg: dict, clip: float
         if mask.sum() < 1000:
             continue
         model = Ridge(alpha=float(cfg["alpha"]), fit_intercept=not cfg["label_demean"])
-        model.fit(blocks.to_numpy()[mask], y.to_numpy()[mask])
+        weight = None if sample_weight is None else np.asarray(sample_weight, dtype=np.float64)[mask]
+        model.fit(blocks.to_numpy()[mask], y.to_numpy()[mask], sample_weight=weight)
         out["coef"][horizon] = [float(c) for c in model.coef_]
         out["intercept"][horizon] = float(model.intercept_) if not cfg["label_demean"] else 0.0
         out["rows"][horizon] = int(mask.sum())
@@ -152,8 +158,13 @@ def _group_sizes(index: pd.Index) -> np.ndarray:
     return counts
 
 
-def fit_rank(ranked: pd.DataFrame, labels: pd.DataFrame, cfg: dict, categorical: list[str], clip: float) -> dict:
-    """{"k250_s0_long": model, "k250_s0_short": model, ...}。quantile は "_long" だけ。"""
+def fit_rank(ranked: pd.DataFrame, labels: pd.DataFrame, cfg: dict, categorical: list[str], clip: float,
+             sample_weight: np.ndarray | None = None) -> dict:
+    """{"k250_s0_long": model, "k250_s0_short": model, ...}。quantile は "_long" だけ。
+
+    sample_weight（P7 B、ranked.index と同じ行順、None = 従来どおり）は各 fit の sample_weight へ渡す
+    （LightGBM は行重みで勾配・ヘッセを掛ける。ranking でも行単位で効く）。
+    """
     objective = str(cfg["objective"])
     if objective not in ("lambdarank", "rank_xendcg", "quantile"):
         raise ValueError(f"unknown rank objective: {objective!r} (lambdarank | rank_xendcg | quantile)")
@@ -173,11 +184,15 @@ def fit_rank(ranked: pd.DataFrame, labels: pd.DataFrame, cfg: dict, categorical:
         # LightGBM 4.1.0 + numpy 2 calls np.array(..., copy=False): labels / groups must already
         # have the dtype LightGBM wants (float32 / int32), otherwise it raises "Unable to avoid copy".
         groups = _group_sizes(x.index).astype(np.int32)
+        # Same numpy 2 rule as labels: weights must already be contiguous float32 (or None = unweighted).
+        weight = None if sample_weight is None else \
+            np.ascontiguousarray(np.asarray(sample_weight)[mask], dtype=np.float32)
         for seed in cfg["seeds"]:
             if objective == "quantile":
                 model = lgb.LGBMRegressor(objective="quantile", alpha=float(cfg["quantile_alpha"]),
                                           random_state=int(seed), **params)
-                model.fit(x, np.ascontiguousarray(y.to_numpy(), dtype=np.float32), categorical_feature=categorical)
+                model.fit(x, np.ascontiguousarray(y.to_numpy(), dtype=np.float32), sample_weight=weight,
+                          categorical_feature=categorical)
                 boosters[f"{horizon}_s{seed}_long"] = model
                 continue
             rel = relevance(y, int(cfg["relevance_levels"])).to_numpy()
@@ -186,7 +201,7 @@ def fit_rank(ranked: pd.DataFrame, labels: pd.DataFrame, cfg: dict, categorical:
                 sides["short"] = int(cfg["relevance_levels"]) - 1 - rel
             for side, target in sides.items():
                 model = lgb.LGBMRanker(objective=objective, random_state=int(seed), **params)
-                model.fit(x, np.ascontiguousarray(target, dtype=np.float32), group=groups,
+                model.fit(x, np.ascontiguousarray(target, dtype=np.float32), sample_weight=weight, group=groups,
                           categorical_feature=categorical)
                 boosters[f"{horizon}_s{seed}_{side}"] = model
     return boosters

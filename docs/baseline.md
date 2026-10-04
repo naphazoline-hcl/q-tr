@@ -127,7 +127,19 @@ P2 の alpha_v2 を実データで検証した（既定構成 = +1.879 で v1 �
     だが Train OOS が採用版 +2.124 未満のため不採用（Valid の +0.01 は標準誤差 ≈0.02 の範囲）。
   - slow_profile（ラベル設計の変更）: span20（k250 のみ学習）Train OOS +2.096 / span5（k126 のみ）
     +2.108（回転率 0.0207）。どちらも採用版 +2.124 未満で不採用。
-  → 現行設計の局所探索は出尽くし。次は新ブロック・ロバスト化・学習スキームなど構造変更が必要（P7 候補）。
+   → 現行設計の局所探索は出尽くし。次は新ブロック・ロバスト化・学習スキームなど構造変更が必要（P7 候補）。
+- P7（改善3: 新ブロックとロバスト化）の実測（2026-10-04、`work/reports/improve3_wf_*.json`、基準は v4/S5 +2.1240 再現確認済み）。
+  いずれも基準未達のため不採用。提出候補は v4/S5 のまま:
+  | 候補 | Train OOS | 備考 |
+  |---|---|---|
+  | v3（block_set v3、Ridge 経由のみ） | +2.022 | 新ブロックは Ridge 係数としてのみ使用 |
+  | v3_direct（v3 + 直接合成 momentum/revision 0.2） | +2.087 | |
+  | decay250 / decay500（sample_decay_halflife） | +2.089 / +2.088 | 学習重みの時間減衰のみ |
+  | topk25（feature_top_k 25） | +2.093 | 2パス学習。8候補中の最大だが基準未達 |
+  | v3+decay500 / v3+topk25 / all_on（v3+decay750+topk30） | +2.055 / +2.049 / +2.046 | 組み合わせは単独より低下 |
+  - OFF 既定でのビット一致は合成データで確認（selftest_p7: S5/K1/S5+rank/S5+regime_mix の4構成で max|diff|=0）。
+    実データでも P7 反映後の Valid は +0.8030（回転率 0.0133）で v4/S5 と同一（`work/reports/improve3_valid.json`）。
+  - selftest_p7_pipeline（全部 ON の train_v2 → meta → submission 一貫性）OK、truncation OK、lookahead 静的・runtime OK。
 
 ### Valid 実測（2016-04-01 〜 2026-07-31）
 
