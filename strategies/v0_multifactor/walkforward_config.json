@@ -15,8 +15,8 @@
     "model_features": "v1",
     "drop_features": [],
     "horizon_combine": "z",
-    "model_weight": 0.5,
-    "model_smoothing_span": 10,
+    "model_weight": 0.25,
+    "model_smoothing_span": 20,
     "sector_neutral": true,
     "sector_weight": 0.5,
     "block_set": "v1",
@@ -43,6 +43,48 @@
       "max_bin": 127,
       "n_jobs": -1,
       "verbose": -1
-    }
+    },
+    "ensemble_weights": {"lgbm": 1.0, "ridge": 0.6, "rank": 0.0},
+    "ridge": {"alpha": 10.0, "label_demean": true, "blocks": null},
+    "rank_model": {
+      "objective": "lambdarank",
+      "relevance_levels": 5,
+      "two_sided": true,
+      "quantile_alpha": 0.5,
+      "date_stride": 2,
+      "horizons": null,
+      "seeds": [0],
+      "lgbm_params": {
+        "n_estimators": 150,
+        "learning_rate": 0.05,
+        "num_leaves": 31,
+        "min_child_samples": 300,
+        "colsample_bytree": 0.7,
+        "reg_lambda": 1.0,
+        "max_bin": 127,
+        "lambdarank_truncation_level": 30,
+        "n_jobs": -1,
+        "verbose": -1
+      }
+    },
+    "regime_mode": "v4",
+    "regime_v4": {
+      "vol_quantile": 0.6,
+      "consumer_trend_days": 63,
+      "consumer_z_min": 0.0,
+      "fx_strong_yen": -0.05,
+      "cum_floor": -0.05,
+      "confirm_days": 5,
+      "blend_span": 20
+    },
+    "regime_weights": {
+      "risk_off": {"size": 1.0, "value": 0.4, "quality": 0.7, "lowrisk": 0.6},
+      "neutral": {},
+      "expansion": {"size": 1.0, "value": 0.6, "quality": 0.4, "lowrisk": 0.2}
+    },
+    "turnover_cap": 0.017,
+    "turnover_control": "off",
+    "turnover_window": 250,
+    "slow_profile": null
   }
 }

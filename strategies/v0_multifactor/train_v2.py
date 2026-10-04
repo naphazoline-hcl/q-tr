@@ -12,6 +12,10 @@
 - 進捗: <repo>/work/progress/train_v2.json（tools/progress.py の Progress）と同じ場所の STATE.md。
   --resume を付けると、保存済みで列順序が一致するモデルを読み飛ばす。
 - 終了時: <strategy>/meta_v2.json（submission.py が読む）。
+- improve2（P5）: LGBM の後に alpha.fit_extras を 1 回呼ぶ（ensemble_weights が非ゼロのモデルだけ）。
+  Ridge の係数は meta_v2.json の "ridge"、rank モデルは models_v2/rank_<name>.txt（"rank_models"）。
+  turnover_control=auto で選ばれた span は params.model_smoothing_span に書き戻す（提出側も同じ span）。
+  slow_profile のホライズン指定があれば、そのホライズンの LGBM だけを学習する。
 """
 
 from __future__ import annotations
@@ -92,8 +96,9 @@ def _day(value) -> str | None:
 
 def build_meta(alpha, strategy_dir: Path, config: dict, params: dict, horizons: list[int], seeds: list[int],
                columns: list[str], train: pd.DataFrame, labels: pd.DataFrame, models: list[dict],
-               skipped: dict, history_start: pd.Timestamp, config_hash: str) -> dict:
+               skipped: dict, history_start: pd.Timestamp, config_hash: str, extras: dict | None = None) -> dict:
     """submission.py が推論に使う設定一式。params は学習時に解決済みの完全な辞書を残す。"""
+    extras = extras or {}
     dates = train.index.get_level_values("Date")
     label_dates = {c: labels.index.get_level_values("Date")[labels[c].notna().to_numpy()] for c in labels.columns}
     return {
@@ -129,7 +134,30 @@ def build_meta(alpha, strategy_dir: Path, config: dict, params: dict, horizons: 
         "history_start": _day(history_start),
         "config_sha256_16": config_hash,
         "versions": {"lightgbm": lgb.__version__, "pandas": pd.__version__},
+        "ensemble_weights": dict(params.get("ensemble_weights") or {}),
+        "ridge": extras.get("ridge"),
+        "rank_models": extras.get("rank_models", []),
+        "regime_v4": extras.get("regime_v4") or alpha.regime_v4.fit_thresholds(train, params["regime_v4"]),
+        "turnover_cap": float(params.get("turnover_cap", float("nan"))),
+        "turnover_estimates": extras.get("turnover_estimates"),
     }
+
+
+def fit_and_save_extras(alpha, train: pd.DataFrame, labels: pd.DataFrame, params: dict, columns: list[str],
+                        fitted_models: dict, model_dir: Path) -> dict:
+    """alpha.fit_extras を 1 回呼び、rank モデルを models_v2/rank_<name>.txt に保存する（重み 0 は何もしない）。"""
+    model = {"models": fitted_models, "columns": list(columns),
+             "regime": alpha._fit_regime(train, params),
+             "regime_v4": alpha.regime_v4.fit_thresholds(train, params["regime_v4"])}
+    alpha.fit_extras(train, labels, params, model)
+    extras = {"ridge": model.get("ridge"), "regime_v4": model["regime_v4"], "rank_models": [],
+              "turnover_estimates": model.get("turnover_estimates"),
+              "model_smoothing_span": model.get("model_smoothing_span")}
+    for name, fitted in (model.get("rank") or {}).items():
+        file_name = f"rank_{name}.txt"
+        save_booster(fitted.booster_, model_dir / file_name)
+        extras["rank_models"].append({"file": file_name, "name": name})
+    return extras
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -146,14 +174,17 @@ def main(argv: list[str] | None = None) -> int:
     horizons = [int(k) for k in config["horizons"]]
     seeds = [int(s) for s in params["seeds"]]
     history_start = pd.Timestamp(config.get("history_start", "2004-01-01"))
-    jobs = [(k, seed) for k in horizons for seed in seeds]
+    if params.get("profile_horizons"):
+        horizons = [k for k in horizons if f"k{k}" in params["profile_horizons"]]
+    weights = alpha.ensemble.ensemble_weights(params)
+    jobs = [(k, seed) for k in horizons for seed in seeds] if weights["lgbm"] != 0.0 else []
 
     model_dir = strategy_dir / MODEL_DIR_NAME
     model_dir.mkdir(parents=True, exist_ok=True)
     progress_path = Path(args.progress) if args.progress else root / "work" / "progress" / "train_v2.json"
     prog = Progress(
         progress_path,
-        total=len(jobs) + 2,
+        total=len(jobs) + 3,
         meta={"strategy": strategy_dir.name, "module": args.module, "resume": args.resume,
               "jobs": [f"k{k}_s{s}" for k, s in jobs], "config_sha256_16": config_hash},
     )
@@ -176,6 +207,9 @@ def main(argv: list[str] | None = None) -> int:
 
         models: list[dict] = []
         skipped: dict[str, int] = {}
+        fitted_models: dict[str, object] = {}
+        # Per-job LGBM fits must not also fit the extras (ridge / rank / auto span): done once below.
+        lgbm_only = dict(params, ensemble_weights=dict(weights, ridge=0.0, rank=0.0), turnover_control="off")
         for i, (k, seed) in enumerate(jobs, start=1):
             horizon, name = f"k{k}", f"lgbm_k{k}_s{seed}.txt"
             path, step = model_dir / name, 2 + i
@@ -184,10 +218,11 @@ def main(argv: list[str] | None = None) -> int:
                 prog.update(step, f"{name} 保存済みのため読み飛ばし（--resume）", artifact=str(path))
                 print(f"[train_v2] skip {name} (resume)", flush=True)
                 models.append(entry)
+                fitted_models[f"{horizon}_s{seed}"] = lgb.Booster(model_file=str(path))
                 continue
             prog.update(step, f"{name} 学習開始 rows={label_rows[horizon]:,}")
             t0 = time.time()
-            result = alpha.fit_model(train, labels[[horizon]], dict(params, seeds=[seed]))
+            result = alpha.fit_model(train, labels[[horizon]], dict(lgbm_only, seeds=[seed]))
             if list(result["columns"]) != list(columns):
                 raise RuntimeError(f"fit_model の列順序が想定と異なります: {result['columns'][:5]}...")
             fitted = result["models"].get(f"{horizon}_s{seed}")
@@ -200,9 +235,18 @@ def main(argv: list[str] | None = None) -> int:
             prog.update(step, f"{name} 完了 ({seconds:.0f}s)", artifact=str(path), seconds=seconds)
             print(f"[train_v2] saved {name} rows={label_rows[horizon]:,} ({seconds:.0f}s)", flush=True)
             models.append(entry)
+            fitted_models[f"{horizon}_s{seed}"] = fitted
 
+        t0 = time.time()
+        extras = fit_and_save_extras(alpha, train, labels[[f"k{k}" for k in horizons]], params, columns,
+                                     fitted_models, model_dir)
+        if extras.get("model_smoothing_span"):
+            params["model_smoothing_span"] = int(extras["model_smoothing_span"])
+        prog.update(len(jobs) + 3, f"extras 完了 ridge={bool(extras.get('ridge'))} "
+                    f"rank={len(extras.get('rank_models', []))} span={params.get('model_smoothing_span')} "
+                    f"({time.time() - t0:.0f}s)", turnover_estimates=extras.get("turnover_estimates"))
         meta = build_meta(alpha, strategy_dir, config, params, horizons, seeds, columns, train, labels,
-                          models, skipped, history_start, config_hash)
+                          models, skipped, history_start, config_hash, extras)
         write_json_atomic(strategy_dir / META_NAME, meta)
         prog.done("全ジョブ完了 meta_v2.json 書き出し", model_files=meta["model_files"], skipped=skipped)
         print(f"[train_v2] meta: {strategy_dir / META_NAME} models={len(models)} skipped={skipped}", flush=True)

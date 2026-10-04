@@ -13,7 +13,7 @@
   v0 は 1 セッション 1〜3 メッセージ、1 メッセージ 25 分、fast モード対応。
   v0 は入力データを持たない前提で、実行・計測はローカルで行う。
 - **環境**: `.venv`（Python 3.13 + 配布固定 5 パッケージ。配布要件は 3.11 だがバージョン同一のため等価。ただし lightgbm は実採点環境に合わせ **4.1.0**）。
-- **現状**: `strategies/v0_multifactor` に v3 候補 K1（alpha_v2 + model_smoothing_span 10）まで実装・検証済み（Train OOS +2.0391 / Valid +0.7591 / 回転率 0.0161）。提出候補は v3/K1（旧暫定提出は v1）。
+- **現状**: `strategies/v0_multifactor` に v4/S5 採用版（K1 + Ridge アンサンブル ridge0.6 + model_weight 0.25 + model_smoothing_span 20）まで実装・検証済み（Train OOS +2.1240 / Valid +0.8030 / Valid 回転率 0.0133 / コスト 0.33%/年）。S5（P5: ensemble / slowdown / regime_v4）受領・反映済み。提出候補は v4/S5（旧候補は v3/K1、旧暫定提出は v1）。Valid +1.2 は未達。
 
 ## 2. ファイルマップ
 
@@ -35,7 +35,7 @@
 | `tools/profile_data.py` | `docs/data_schema.md` 生成（target 定義の検算つき） |
 | `tools/make_zip.py` | 提出 zip 作成（create_zip.ipynb と同一ルール）+ zip で採点 |
 | `tools/progress.py` | Progress（JSONL + STATE.md）。長時間処理の共通規約 |
-| `strategies/v0_multifactor/` | v1 の全ファイル + `alpha.py`（walkforward API のラッパー）+ `walkforward_config.json` |
+| `strategies/v0_multifactor/` | v1 の全ファイル + `alpha.py`（walkforward API のラッパー）+ `walkforward_config.json`。v2 以降: `alpha_features.py` / `alpha_v2.py` / `submission.py` / `train_v2.py`。P5 追加: `ensemble.py` / `slowdown.py` / `regime_v4.py` / `selftest_p5.py` / `bench_p5.py`（v0 生成、ローカルで検収済み） |
 | `requirements.txt` / `evaluate_script.py` / `input/` / `input_manifest.json` | 配布物（`evaluate_script.py` / `input/` / `input_manifest.json` は触らない。`requirements.txt` は lightgbm のみ実採点環境に合わせ 4.1.0 へ修正済み） |
 
 ## 3. 外部サービスの仕様（確定事項・再調査しないこと）
@@ -74,14 +74,22 @@
 - 環境再現: `setup_env.ps1` を参照（venv 作成 + 固定バージョンの導入）。
 - ローカル scoring コマンド:
   `python tools/score.py --submission strategies/v0_multifactor --split valid --json work/reports/<name>.json`
--長時間ジョブはバックグラウンド起動 + `work/logs/` へログ。`python tools/progress.py show` で進捗確認。
-  コマンドの制限時間（約30秒）を超える処理は必ず Start-Process/Start-Job で回す。
+-長時間ジョブはバックグラウンド起動 + `work/logs/` へログ。進捗確認は `python tools/progress.py <path>`
+  （`show` サブコマンドは無い）。コマンドの制限時間（約30秒）を超える処理は必ず Start-Process/Start-Job で回す。
 
 ## 6. 次の作業
 
-1. **S5 の送信**: `v0/messages/S5_初回メッセージ.md`（実測記入済み）。P5 はアンサンブル（Ridge / 順位回帰）+
-   局面配分 + turnover_cap。検証は `--module alpha_v2` を付ける。
-2. 受領後: py_compile → walkforward（Train OOS、基準 +2.0391）→ train_v2 → score valid（基準 +0.7591）→
-   lookahead --runtime。採用は Train OOS と Valid の両方で現行を上回ったものだけ。
-3. 提出候補は **v3/K1（Train +2.0391 / Valid +0.7591）**。Valid +1.2 超えで中間報告、+1.5 で最終レポート（P6）→ 提出 zip。
+1. **S5 は受領・反映・検収済み**（2026-10-04）。受領物は `work/s5_package/`（gitignore）、実測は
+   `work/reports/sweep_improve2.md` / `improve2.json` / `improve2_final.json` / `improve2_final_valid.json`。
+   E1（出荷時既定 ridge0.3）は Valid +0.747 で不採用、mw025_ridge06_span20 を採用（Train +2.1240 /
+   Valid +0.8030 / 回転率 0.0133）。config・meta・モデルは反映済み。runtime・truncation OK。
+2. **次にやる候補（Valid +1.2 に向けて。ユーザー指示を待つ）**:
+   - `tools/sweep_improve2.py --rank` を回して rank モデル（lambdarank / rank_xendcg / quantile）を実測。
+     rank は既定 OFF のまま。`{要実行}`。
+   - `slow_profile`（span5↔k126 のみ / span20↔k250 のみ）のラベル設計を walkforward で再学習比較。`{要実行}`。
+   - `regime_weights` / `regime_v4` の再調整（現状の既定は未検証値。sweep では改善なし）。`{要実行}`。
+   - 単純化路線（sample02 が Valid +1.12）に沿う size/liquidity 寄せ（回転率が低く伸びしろがある）。`{要実行}`。
+3. 提出判断: 現行 v4/S5 で提出するなら P6（`v0/messages/S6_初回メッセージ.md` は実測記入済み・
+   最新版採用時に更新）。`python tools/make_zip.py --name v0_multifactor --score` で zip 採点を確認。
+4. push / 提出 zip 作成はユーザーの明示指示があった場合のみ実行する。
 

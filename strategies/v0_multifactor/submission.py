@@ -4,8 +4,12 @@ signal = sum_b w_b z(block_b) + w_model z(model) [+ sector_neutral: w_sector z(m
 -> 銘柄ごとの EWMA(span=smoothing_span) -> 採点対象 index へ reindex。
 数式は alpha_v2.predict_signal と tools/walkforward.py の平滑化に合わせ、同じ関数を呼んでいる。
 
+improve2（P5）: model = ensemble.combine({lgbm, ridge, rank}, params.ensemble_weights)。Ridge は
+meta_v2.json の係数（JSON）、rank モデルは models_v2/rank_*.txt。重みが 0 のモデルは読まない・計算しない
+（既定は lgbm のみ = K1 と同一）。regime_mix は meta_v2.json の学習時しきい値（regime / regime_v4）を使う。
+
 同梱物（Path(__file__).resolve().parent 基準）: meta_v2.json / models_v2/*.txt / alpha_v2.py /
-alpha_features.py。配布 parquet はベース名で相対読みする（cwd = データ展開先）。
+alpha_features.py / ensemble.py / regime_v4.py / slowdown.py。配布 parquet はベース名で相対読みする。
 
 メモリ・時間対策（採点は 30 分以内・非力な環境を想定）
 - 特徴量は alpha_v2.build_features(start=HISTORY_START)。alpha_features が pyarrow の列指定と
@@ -40,6 +44,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import alpha_v2  # noqa: E402
+import ensemble  # noqa: E402
 
 # Valid starts 2016-04-01; 2014-06-01 leaves > 250 trading days for the rolling windows.
 HISTORY_START = pd.Timestamp("2014-06-01")
@@ -108,23 +113,25 @@ def load_boosters(meta: dict) -> dict[str, list[lgb.Booster]]:
     return boosters
 
 
-def block_signal(features: pd.DataFrame, meta: dict, config: dict) -> np.ndarray:
-    """alpha_v2.predict_signal のブロック部分と同一（regime_mix / fill_missing_blocks も同じ扱い）。"""
-    weights = config["block_weights"]
-    expansion = None
-    if config["regime_mix"]:
-        expansion = alpha_v2.regime_expansion(features, {"regime": meta.get("regime", {})}, config)
-    expansion_weights = config["regime"]["expansion_block_weights"]
-    signal = np.zeros(len(features), dtype=np.float64)
-    for block, score in alpha_v2.block_scores(features, config).items():
-        z = alpha_v2.xsec_z(score).to_numpy(np.float64)
-        if config["fill_missing_blocks"]:
-            z = np.nan_to_num(z, nan=0.0)
-        weight = float(weights.get(block, 0.0))
-        if expansion is not None:
-            weight = np.where(expansion, float(expansion_weights.get(block, weight)), weight)
-        signal = alpha_v2._add_weighted(signal, weight, z)
-    return signal
+def load_rank_models(meta: dict, config: dict) -> dict[str, lgb.Booster]:
+    """rank モデル（{name: Booster}）。ensemble_weights.rank が 0 なら読まない。列は LGBM と同じ meta の features。"""
+    if ensemble.ensemble_weights(config)["rank"] == 0.0:
+        return {}
+    model_dir = HERE / meta.get("model_dir", "models_v2")
+    expected = list(meta["features"])
+    models = {}
+    for entry in meta.get("rank_models") or []:
+        booster = lgb.Booster(model_file=str(model_dir / entry["file"]))
+        if list(booster.feature_name()) != expected:
+            raise RuntimeError(f"{entry['file']} の特徴量列が meta_v2.json と一致しません")
+        models[entry["name"]] = booster
+    return models
+
+
+def block_signal(features: pd.DataFrame, meta: dict, config: dict) -> tuple[np.ndarray, dict]:
+    """alpha_v2.block_part と同一（regime_mix は meta の学習時しきい値: legacy=regime / v4=regime_v4）。"""
+    frozen = {"regime": meta.get("regime", {}), "regime_v4": meta.get("regime_v4")}
+    return alpha_v2.block_part(features, frozen, config)
 
 
 def ranked_matrix(features: pd.DataFrame, columns: list[str]) -> np.ndarray:
@@ -174,26 +181,36 @@ def smooth_by_code(signal: pd.Series, span: int) -> pd.Series:
     return signal.groupby(level="Code", sort=False).transform(lambda x: x.ewm(span=span, min_periods=1).mean())
 
 
-def predict_split(split: str, meta: dict, config: dict, boosters: dict) -> pd.Series:
+def predict_split(split: str, meta: dict, config: dict, boosters: dict, rank_models: dict | None = None) -> pd.Series:
     """1 split 分の平滑化済みシグナル（採点対象 index に reindex 済み）。中間物は関数内で解放する。"""
     if split == "valid":
         splits, start = ("train", "valid"), HISTORY_START
     else:
         splits, start = ("train",), pd.Timestamp(meta.get("history_start") or "2004-01-01")
+    weights = ensemble.ensemble_weights(config)
+    rank_models = rank_models or {}
     features = alpha_v2.build_features(splits=splits, start=start)
     index = features.index
-    signal = block_signal(features, meta, config)
+    signal, blocks_z = block_signal(features, meta, config)
+    ridge = alpha_v2.ridge_prediction(features, meta.get("ridge"), blocks_z, config) if weights["ridge"] else None
+    del blocks_z
     sector = features["sector33"].to_numpy(dtype=np.float64) if "sector33" in features.columns else None
     ranked = None
-    if boosters:
+    if boosters or rank_models:
         columns = list(meta["features"])
         ranked = pd.DataFrame(ranked_matrix(features, columns), index=index, columns=columns, copy=False)
     del features
     gc.collect()
 
-    prediction = model_prediction(ranked, boosters, config["horizon_combine"]) if ranked is not None else None
+    predictions = {"lgbm": model_prediction(ranked, boosters, config["horizon_combine"]) if boosters else None,
+                   "ridge": ridge}
+    if rank_models:
+        matrix = np.ascontiguousarray(ranked.to_numpy(dtype=np.float32, copy=False))
+        predictions["rank"] = ensemble.combine_rank({n: b.predict(matrix) for n, b in rank_models.items()}, index)
+        del matrix
     del ranked
     gc.collect()
+    prediction = ensemble.combine(predictions, weights)
 
     # Same model terms as alpha_v2.predict_signal (model_smoothing_span / sector_neutral included).
     signal = alpha_v2.add_model_terms(signal, prediction, sector, config)
@@ -208,8 +225,11 @@ def predict() -> pd.DataFrame:
     config = dict(meta["params"])
     if meta.get("blocks"):
         config["blocks"] = meta["blocks"]
-    boosters = load_boosters(meta)
-    parts = [predict_split(split, meta, config, boosters) for split in requested_splits()]
+    # meta_v2.json written before improve2 has no regime_mode: its regime_mix meant the P2 2-regime rule.
+    config.setdefault("regime_mode", "legacy")
+    boosters = load_boosters(meta) if ensemble.ensemble_weights(config)["lgbm"] != 0.0 else {}
+    rank_models = load_rank_models(meta, config)
+    parts = [predict_split(split, meta, config, boosters, rank_models) for split in requested_splits()]
     result = parts[0] if len(parts) == 1 else pd.concat(parts)
     result = result[~result.index.duplicated(keep="last")]
     frame = result.astype(np.float64).rename("Return").to_frame()

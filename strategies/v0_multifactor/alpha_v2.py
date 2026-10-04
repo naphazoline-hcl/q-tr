@@ -12,6 +12,14 @@ improve1（v2 -> v3 候補、CHANGELOG_v2v3.md）で追加したパラメータ�
   end で切った target に逆順 rolling(min_periods=1) を掛ける。境界付近は短い窓になる）。
   horizon_combine（z | mean）と組み合わせて ③ の切り分けに使う。
 
+improve2（v3 -> v4 候補、CHANGELOG_v3v4.md）で追加したパラメータ（既定値なら K1 と同一の挙動）:
+- ensemble_weights {"lgbm", "ridge", "rank"}: 各モデル予測を同日断面 z にしてから加重合成（ensemble.py）。
+  lgbm だけが非ゼロなら合成をせず LGBM 予測を素通し（K1 とビット一致）。ridge / rank_model が各モデルの設定。
+- regime_mix + regime_mode "v4"（既定）: マクロ2変数 + 市場2変数の因果ルールで 3 局面に分け、
+  regime_weights の局面別ブロック重みを所属度で混ぜる（regime_v4.py）。"legacy" は P2 の 2 局面版。
+- turnover_cap / turnover_control / turnover_window / slow_profile: 回転率上限の宣言と、
+  モデル項 EWMA span（5 / 10 / 20）とラベル設計のセット選択（slowdown.py）。
+
 API（docs/coding_conventions.md §2）::
 
     build_features(splits=("train",), start=None, end=None) -> DataFrame
@@ -39,6 +47,10 @@ import pandas as pd
 
 from alpha_features import ALL_COLUMNS, V1_COLUMNS, SECTOR_COLUMNS
 from alpha_features import build_features as build_v2
+
+import ensemble
+import regime_v4
+import slowdown
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
@@ -125,6 +137,17 @@ DEFAULT_PARAMS = {
         "expansion_block_weights": {"size": 0.5, "value": 0.25, "quality": 0.5, "lowrisk": 0.3},
     },
     "model_params": DEFAULT_MODEL_PARAMS,
+    # improve2 (P5). Defaults keep K1 unchanged.
+    "ensemble_weights": dict(ensemble.DEFAULT_ENSEMBLE_WEIGHTS),
+    "ridge": ensemble.DEFAULT_RIDGE,
+    "rank_model": ensemble.DEFAULT_RANK,
+    "regime_mode": "v4",  # v4 (P5 B, 3 regimes) | legacy (P2, 2 regimes). Only used when regime_mix.
+    "regime_v4": regime_v4.DEFAULT_REGIME_V4,
+    "regime_weights": regime_v4.DEFAULT_REGIME_WEIGHTS,
+    "turnover_cap": 0.017,  # declared daily turnover ceiling (scorer definition)
+    "turnover_control": "off",  # off | auto (fit_model picks the model EWMA span from slowdown.SPAN_CHOICES)
+    "turnover_window": 250,  # training-tail days used by the auto span estimate
+    "slow_profile": None,  # None | span5 | span10 | span20 (span + label design, slowdown.SLOW_PROFILES)
 }
 DEFAULT_LABEL_CLIP = 0.05
 
@@ -160,7 +183,7 @@ def merged_params(params: dict | None = None) -> dict:
     merged = _deep_merge(merged, params)
     if merged.get("label_clip") is None:
         merged["label_clip"] = float(config.get("label_clip", DEFAULT_LABEL_CLIP))
-    return merged
+    return slowdown.apply_profile(merged)
 
 
 def _data_dir() -> Path:
@@ -201,7 +224,7 @@ def xsec_rank_in_group(values: pd.Series, groups, min_count: int = 3) -> pd.Seri
     """同一 (Date, group) 内の中心化順位 (rank - 0.5) / n - 0.5。
 
     小さい業種でも平均が 0 になる定義（n=1 なら 0）。有効銘柄が min_count 未満の
-    グループと業種コード欠損の行は NaN（ブロック平均では全体順位だけが��われる）。
+    グループと業種コード欠損の行は NaN（ブロック平均では全体順位だけが使われる）。
     """
     grouped = values.groupby(_group_keys(values, groups), sort=False)
     rank = grouped.rank(method="average")
@@ -358,13 +381,23 @@ def fit_model(features: pd.DataFrame, labels: pd.DataFrame, params: dict | None 
         "skipped": {},
         "label_days": {},
         "regime": _fit_regime(features, config),
+        "regime_v4": regime_v4.fit_thresholds(features, config["regime_v4"]),
     }
     labels = labels.reindex(features.index)
+    profile_horizons = config.get("profile_horizons")
+    if profile_horizons:
+        for horizon in [h for h in labels.columns if h not in profile_horizons]:
+            result["skipped"][horizon] = "slow_profile"
+        labels = labels[[h for h in labels.columns if h in profile_horizons]]
     if len(features) == 0:
         return result
     ranked = rank_for_model(features, columns)
     categorical = [c for c in columns if c in SECTOR_COLUMNS]
-    for horizon in labels.columns:
+    if ensemble.ensemble_weights(config)["lgbm"] == 0.0:
+        labels_for_lgbm = labels.iloc[:, :0]  # LGBM switched off: skip its training entirely
+    else:
+        labels_for_lgbm = labels
+    for horizon in labels_for_lgbm.columns:
         y = transform_label(labels[horizon].clip(-clip, clip), features, config["label_transform"])
         mask = y.notna().to_numpy()
         n_days = int(_dates(y)[mask].nunique())
@@ -376,7 +409,54 @@ def fit_model(features: pd.DataFrame, labels: pd.DataFrame, params: dict | None 
             booster = lgb.LGBMRegressor(random_state=int(seed), **model_params)
             booster.fit(ranked.loc[mask], y.loc[mask], categorical_feature=categorical)
             result["models"][f"{horizon}_s{seed}"] = booster
+    fit_extras(features, labels, config, result, ranked=ranked)
     return result
+
+
+def fit_extras(features: pd.DataFrame, labels: pd.DataFrame, config: dict, model: dict,
+               ranked: pd.DataFrame | None = None) -> dict:
+    """P5: Ridge / rank モデル（重みが非ゼロのときだけ）と turnover_control=auto の span 選択を model に足す。
+
+    fit_model と train_v2.py が共有する（LGBM 本体は呼び出し側で学習済み）。labels は学習期間のみ。
+    """
+    weights = ensemble.ensemble_weights(config)
+    clip = float(config["label_clip"])
+    if len(features) == 0:
+        return model
+    if weights["ridge"] != 0.0:
+        ridge_cfg = ensemble.merged_section(config, "ridge", ensemble.DEFAULT_RIDGE)
+        ridge_config = dict(config, blocks=ridge_cfg["blocks"] or config.get("blocks"))
+        blocks_z = {b: xsec_z(s).to_numpy(np.float64) for b, s in block_scores(features, ridge_config).items()}
+        model["ridge"] = ensemble.fit_ridge(ensemble.block_frame(blocks_z, features.index), labels, ridge_cfg, clip)
+        model["ridge"]["blocks"] = resolve_blocks(ridge_config)
+    if weights["rank"] != 0.0:
+        rank_cfg = ensemble.merged_section(config, "rank_model", ensemble.DEFAULT_RANK)
+        columns = model.get("columns") or model_columns(features, config)
+        if ranked is None:
+            ranked = rank_for_model(features, columns)
+        categorical = [c for c in columns if c in SECTOR_COLUMNS]
+        model["rank"] = ensemble.fit_rank(ranked[columns], labels, rank_cfg, categorical, clip)
+    if str(config.get("turnover_control", "off")) == "auto":
+        estimates = estimate_spans(features, model, config)
+        model["turnover_estimates"] = estimates
+        model["model_smoothing_span"] = slowdown.choose_span(estimates, float(config["turnover_cap"]))
+    return model
+
+
+def estimate_spans(features: pd.DataFrame, model: dict, config: dict) -> dict[int, float]:
+    """学習期間末尾 turnover_window 日で、モデル項 span ごとの回転率（採点式・ラベル不使用）を推定。
+
+    最終平滑化（walkforward_config.json の smoothing_span）も掛けた後の値。
+    """
+    tail = features.loc[slowdown.tail_rows(features.index, int(config["turnover_window"]))]
+    base, prediction, sector = signal_parts(tail, model, config)
+    final_span = int(load_config().get("smoothing_span", 5))
+    estimates = {}
+    for span in slowdown.SPAN_CHOICES:
+        raw = add_model_terms(base, prediction, sector, dict(config, model_smoothing_span=span))
+        signal = slowdown.ewm_by_code(pd.Series(raw, index=tail.index), final_span)
+        estimates[int(span)] = round(slowdown.quintile_turnover(signal), 5)
+    return estimates
 
 
 def resolve_blocks(config: dict) -> dict:
@@ -422,17 +502,28 @@ def regime_expansion(features: pd.DataFrame, model: dict, config: dict) -> np.nd
         return (consumer > z_min) & (vol < threshold)
 
 
-def model_prediction(features: pd.DataFrame, model: dict, how: str = "z") -> pd.Series | None:
-    """seed 平均 -> ホライズンごとに断面 z（how="z"）-> ホライズン平均。how="mean" は v1 と同じ単純平均。"""
+def _feature_names(booster) -> list[str]:
+    """sklearn ラッパー（feature_name_）と lgb.Booster（feature_name()）の両方に対応。"""
+    names = getattr(booster, "feature_name_", None)
+    return list(names if names is not None else booster.feature_name())
+
+
+def model_prediction(features: pd.DataFrame, model: dict, how: str = "z",
+                     ranked: pd.DataFrame | None = None) -> pd.Series | None:
+    """seed 平均 -> ホライズンごとに断面 z（how="z"）-> ホライズン平均。how="mean" は v1 と同じ単純平均。
+
+    ranked（rank_for_model の結果）を渡せば順位化をやり直さない（rank モデルと共有するため）。
+    """
     boosters = (model or {}).get("models", {})
     if not boosters:
         return None
-    columns = model.get("columns") or list(next(iter(boosters.values())).feature_name_)
-    ranked = rank_for_model(features, columns)
+    if ranked is None:
+        columns = model.get("columns") or _feature_names(next(iter(boosters.values())))
+        ranked = rank_for_model(features, columns)
     per_horizon: dict[str, list[np.ndarray]] = {}
     for name, booster in boosters.items():
         horizon = name.rsplit("_s", 1)[0]
-        per_horizon.setdefault(horizon, []).append(booster.predict(ranked[list(booster.feature_name_)]))
+        per_horizon.setdefault(horizon, []).append(booster.predict(ranked[_feature_names(booster)]))
     del ranked
     combined = []
     for predictions in per_horizon.values():
@@ -453,24 +544,73 @@ def predict_signal(features: pd.DataFrame, model: dict, params: dict | None = No
     平滑化前の生シグナル（index は features と同じ）。z は同一 Date の断面 z（±3 で clip）。
     """
     config = merged_params(params)
-    weights = config["block_weights"]
-    expansion = regime_expansion(features, model, config) if config["regime_mix"] else None
-    expansion_weights = config["regime"]["expansion_block_weights"]
+    base, prediction, sector = signal_parts(features, model, config)
+    span = (model or {}).get("model_smoothing_span") or config.get("model_smoothing_span", 1)
+    signal = add_model_terms(base, prediction, sector, dict(config, model_smoothing_span=span))
+    return pd.Series(signal, index=features.index, dtype=np.float32, name="signal")
 
+
+def block_weight_rows(features: pd.DataFrame, model: dict, config: dict, blocks: list[str]) -> dict:
+    """ブロック重み（スカラー or 行ごとの配列）。regime_mix=False なら block_weights そのもの（K1）。
+
+    regime_mode "v4": 学習期間で決めたしきい値（model["regime_v4"]）だけを使う。しきい値が無い
+    （古い meta 等）ときは NaN -> 常に neutral（= block_weights）として動き、予測期間で再推定はしない。
+    """
+    base = config["block_weights"]
+    if not config["regime_mix"]:
+        return {b: float(base.get(b, 0.0)) for b in blocks}
+    if str(config.get("regime_mode", "v4")) == "legacy":
+        expansion = regime_expansion(features, model, config)
+        expansion_weights = config["regime"]["expansion_block_weights"]
+        out = {}
+        for b in blocks:
+            weight = float(base.get(b, 0.0))
+            out[b] = np.where(expansion, float(expansion_weights.get(b, weight)), weight)
+        return out
+    thresholds = (model or {}).get("regime_v4") or {"vol_threshold": float("nan")}
+    return regime_v4.block_weight_arrays(features, thresholds, config["regime_v4"],
+                                         config.get("regime_weights") or {}, base, blocks)
+
+
+def block_part(features: pd.DataFrame, model: dict, config: dict) -> tuple[np.ndarray, dict]:
+    """sum_b w_b z(block_b) と、各ブロックの z（Ridge の説明変数に再利用）。submission.py と共有。"""
+    blocks_z = {b: xsec_z(s).to_numpy(np.float64) for b, s in block_scores(features, config).items()}
+    weights = block_weight_rows(features, model, config, list(blocks_z))
     signal = np.zeros(len(features), dtype=np.float64)
-    for block, score in block_scores(features, config).items():
-        z = xsec_z(score).to_numpy(np.float64)
+    for block, z in blocks_z.items():
         if config["fill_missing_blocks"]:
             z = np.nan_to_num(z, nan=0.0)
-        weight = float(weights.get(block, 0.0))
-        if expansion is not None:
-            weight = np.where(expansion, float(expansion_weights.get(block, weight)), weight)
-        signal = _add_weighted(signal, weight, z)
+        signal = _add_weighted(signal, weights[block], z)
+    return signal, blocks_z
 
-    prediction = model_prediction(features, model, config["horizon_combine"])
+
+def ridge_prediction(features: pd.DataFrame, ridge: dict | None, blocks_z: dict, config: dict) -> pd.Series | None:
+    """Ridge 予測。Ridge 用ブロック定義がシグナルと同じなら blocks_z を再利用する。"""
+    if not ridge or not ridge.get("coef"):
+        return None
+    if ridge.get("blocks") and ridge["blocks"] != resolve_blocks(config):
+        scores = block_scores(features, dict(config, blocks=ridge["blocks"]))
+        blocks_z = {b: xsec_z(s).to_numpy(np.float64) for b, s in scores.items()}
+    return ensemble.predict_ridge(ensemble.block_frame(blocks_z, features.index), ridge)
+
+
+def signal_parts(features: pd.DataFrame, model: dict, config: dict):
+    """(ブロック合成, 合成済みモデル予測 or None, sector33)。モデル項の平滑化・z は add_model_terms 側。"""
+    model = model or {}
+    base, blocks_z = block_part(features, model, config)
+    weights = ensemble.ensemble_weights(config)
+    columns = model.get("columns")
+    need_rank = weights["rank"] != 0.0 and bool(model.get("rank"))
+    ranked = rank_for_model(features, columns) if columns and (model.get("models") or need_rank) else None
+    predictions = {"lgbm": model_prediction(features, model, config["horizon_combine"], ranked=ranked)}
+    if weights["ridge"] != 0.0:
+        predictions["ridge"] = ridge_prediction(features, model.get("ridge"), blocks_z, config)
+    if need_rank:
+        raw = {name: m.predict(ranked[_feature_names(m)]) for name, m in model["rank"].items()}
+        predictions["rank"] = ensemble.combine_rank(raw, features.index)
+    del ranked
     sector = features["sector33"].to_numpy(np.float64) if "sector33" in features.columns else None
-    signal = add_model_terms(signal, prediction, sector, config)
-    return pd.Series(signal, index=features.index, dtype=np.float32, name="signal")
+    return base, ensemble.combine(predictions, weights), sector
 
 
 def smooth_by_code(values: pd.Series, span: int) -> pd.Series:
