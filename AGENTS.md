@@ -79,17 +79,17 @@
 
 ## 6. 次の作業
 
-1. **S5 は受領・反映・検収済み**（2026-10-04）。受領物は `work/s5_package/`（gitignore）、実測は
+1. **S5 反映・検収済み**（2026-10-04）。受領物は `work/s5_package/`（gitignore）。実測は
    `work/reports/sweep_improve2.md` / `improve2.json` / `improve2_final.json` / `improve2_final_valid.json`。
-   E1（出荷時既定 ridge0.3）は Valid +0.747 で不採用、mw025_ridge06_span20 を採用（Train +2.1240 /
-   Valid +0.8030 / 回転率 0.0133）。config・meta・モデルは反映済み。runtime・truncation OK。
-2. **次にやる候補（Valid +1.2 に向けて。ユーザー指示を待つ）**:
-   - `tools/sweep_improve2.py --rank` を回して rank モデル（lambdarank / rank_xendcg / quantile）を実測。
-     rank は既定 OFF のまま。`{要実行}`。
-   - `slow_profile`（span5↔k126 のみ / span20↔k250 のみ）のラベル設計を walkforward で再学習比較。`{要実行}`。
-   - `regime_weights` / `regime_v4` の再調整（現状の既定は未検証値。sweep では改善なし）。`{要実行}`。
-   - 単純化路線（sample02 が Valid +1.12）に沿う size/liquidity 寄せ（回転率が低く伸びしろがある）。`{要実行}`。
-3. 提出判断: 現行 v4/S5 で提出するなら P6（`v0/messages/S6_初回メッセージ.md` は実測記入済み・
-   最新版採用時に更新）。`python tools/make_zip.py --name v0_multifactor --score` で zip 採点を確認。
-4. push / 提出 zip 作成はユーザーの明示指示があった場合のみ実行する。
+   採用は mw025_ridge06_span20（Train +2.1240 / Valid +0.8030 / 回転率 0.0133）。コミット ffccd38（push 済み）。
+2. **P5 後のローカル探索も完了**（コミット 7c4ef36、push 未）: span 微調整・rank 併用・slow_profile を実測し、
+   いずれも v4/S5 を上回らず不採用。詳細は `docs/baseline.md` の「P5 後のローカル追加探索」。
+3. **P7（改善3: 新ブロックとロバスト化）を作成済み・未送信**:
+   `v0/prompts/P7_改善3_新ブロックとロバスト化.md`（block_set v3 + sample_decay_halflife + feature_top_k）、
+   `v0/messages/S7_初回メッセージ.md`（実測記入済み）。**push してからユーザーが v0 に S7 を貼る。**
+   受領後は S5 と同じ検収フロー（展開→差分レビュー→py_compile→lookahead→selftest→walkforward→
+   sweep 拡張→train_v2→score→runtime→truncation→採用判断→docs/commit/push）。
+4. 提出判断: 現行 v4/S5 で提出するなら P6（`v0/messages/S6_初回メッセージ.md` 実測記入済み）。
+   `python tools/make_zip.py --name v0_multifactor --score` で zip 採点を確認。
+5. push / 提出 zip 作成はユーザーの明示指示があった場合のみ実行する。
 
