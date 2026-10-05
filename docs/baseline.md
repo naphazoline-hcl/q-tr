@@ -197,6 +197,36 @@ v5 とビット一致することを確認（`selftest_p8.py --reference work/re
 - 参考: `selftest_p7.py` は現行 v5 config の明示 `blocks` とテスト前提が食い違うため通常実行では NG 表示だが、
   config なし隔離コピーでは RESULT OK（P8 マージによる回帰なし）。受領 alpha_v2.py の文字化け 1 行は復元。
 
+#### ローカル採用: 予測側の再配合 v6（quality tilt / sector 中立化 OFF / lowrisk 撤去、2026-10-05）
+
+P8 不採用の後、P9 のテーマ選定前に v5 の弱点を成分別に診断した（`work/sweep_improve2` の成分を v5 config で
+再生成し、`work/diag_v5.py` で寄与分解 → `work/search_v5_diag.py` / `search_v5_diag2.py` で予測側パラメータを
+214 候補探索）。その結果、**コード変更なし・予測側の合成パラメータのみ**で両面を大きく改善できる配合が見つかった。
+
+主な診断結果（Valid）: size_pure 単独 +1.192 が主driver、lowrisk 単独 −0.140、model 項（特に LGBM）は
+2024-26 を押し下げ、sector 中立化は 2016/2017/2024-26 で逆効果。2020 は size −1.00 に対し quality +2.40。
+
+採用 v6 の v5 からの差分:
+
+- `sector_neutral: true → false`
+- `block_weights`: size_pure 2.5→**1.8** / quality 0.5→**0.9** / value 0.5→**0.3** / lowrisk 0.3→**0.0**
+- `model_weight 0.25 → 0.15`、`ensemble_weights.ridge 0.6 → 0.4`（lgbm 1.0）
+
+実測（直接パイプライン、`work/reports/direct_v6a_q09_lr0_wf.json` / `direct_v6a_q09_lr0_valid.json`）:
+
+| 指標 | v5 | **v6（採用）** |
+|---|---|---|
+| Train OOS Sharpe | +2.2857 | **+2.4560** |
+| Valid Sharpe | +1.2150 | **+1.3783** |
+| Valid 回転率（コスト） | 0.0109（0.27%） | 0.0130（0.33%） |
+| Valid グロス | +4.37% | +4.63% |
+| Valid maxDD / 勝率 | −3.91% / 54.4% | −3.58% / 54.3% |
+
+- Valid 年別（v6）: 2016 +2.55 / 2017 +3.74 / 2018 +1.24 / 2019 +2.39 / **2020 +0.35** / 2021 +0.66 /
+  2022 +1.79 / 2023 +1.58 / 2024 +0.98 / 2025 +0.70 / 2026 +0.20（2020 が −0.84 → +0.35 と大幅改善）
+- Train OOS 年別（v6）: 2010 +1.96 / 2011 +2.97 / 2012 +1.20 / 2013 +2.67 / 2014 +2.28 / 2015 +3.87
+- 詳細は `CHANGELOG_v6_quality_tilt.md`。ロールバックは `work/improve4_cfgs/walkforward_config_v5_backup.json`。
+
 ### Valid 実測（2016-04-01 〜 2026-07-31）
 
 > ※ lightgbm 4.1.0（実採点環境）で再計測しても値は完全一致

@@ -1,7 +1,7 @@
 {
   "strategy": "v0_multifactor",
   "version": "alpha_v2",
-  "created_at": "2026-10-05 08:28:15",
+  "created_at": "2026-10-05 09:47:22",
   "model_dir": "models_v2",
   "model_files": [
     "lgbm_k126_s0.txt",
@@ -115,9 +115,9 @@
   "label_transform": "raw",
   "label_min_frac": 0.5,
   "smoothing_span": 5,
-  "model_weight": 0.25,
+  "model_weight": 0.15,
   "horizon_combine": "z",
-  "sector_neutral": true,
+  "sector_neutral": false,
   "sector_weight": 0.5,
   "regime_mix": false,
   "regime": {
@@ -125,10 +125,10 @@
   },
   "block_weights": {
     "size": 1.0,
-    "value": 0.5,
-    "quality": 0.5,
-    "lowrisk": 0.3,
-    "size_pure": 2.5
+    "value": 0.3,
+    "quality": 0.9,
+    "lowrisk": 0.0,
+    "size_pure": 1.8
   },
   "blocks": {
     "size_pure": {
@@ -166,9 +166,9 @@
     "model_features": "v1",
     "drop_features": [],
     "horizon_combine": "z",
-    "model_weight": 0.25,
+    "model_weight": 0.15,
     "model_smoothing_span": 20,
-    "sector_neutral": true,
+    "sector_neutral": false,
     "sector_weight": 0.5,
     "block_set": "v1",
     "blocks": {
@@ -200,10 +200,10 @@
     "sector_min_count": 3,
     "block_weights": {
       "size": 1.0,
-      "value": 0.5,
-      "quality": 0.5,
-      "lowrisk": 0.3,
-      "size_pure": 2.5
+      "value": 0.3,
+      "quality": 0.9,
+      "lowrisk": 0.0,
+      "size_pure": 1.8
     },
     "fill_missing_blocks": false,
     "regime_mix": false,
@@ -233,7 +233,7 @@
     },
     "ensemble_weights": {
       "lgbm": 1.0,
-      "ridge": 0.6,
+      "ridge": 0.4,
       "rank": 0.0,
       "linear": 0.0
     },
@@ -333,14 +333,14 @@
   },
   "skipped": {},
   "history_start": "2004-01-01",
-  "config_sha256_16": "19327abea85db416",
+  "config_sha256_16": "c2be8739f96eb711",
   "versions": {
     "lightgbm": "4.1.0",
     "pandas": "3.0.3"
   },
   "ensemble_weights": {
     "lgbm": 1.0,
-    "ridge": 0.6,
+    "ridge": 0.4,
     "rank": 0.0,
     "linear": 0.0
   },

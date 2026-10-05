@@ -13,15 +13,14 @@
   v0 は 1 セッション 1〜3 メッセージ、1 メッセージ 25 分、fast モード対応。
   v0 は入力データを持たない前提で、実行・計測はローカルで行う。
 - **環境**: `.venv`（Python 3.13 + 配布固定 5 パッケージ。配布要件は 3.11 だがバージョン同一のため等価。ただし lightgbm は実採点環境に合わせ **4.1.0**）。
-- **現状**: `strategies/v0_multifactor` に **v5 採用版**（v4/S5 + size 項の再配合: `blocks` を明示上書きし
-  `size_pure {"logsize": -1}` を weight 2.5 で追加、旧 size ブロック廃止。コード変更なし・config のみ）。
-  実測 **Train OOS +2.2857 / Valid +1.2150 / Valid 回転率 0.0109（コスト 0.27%/年）**。
-  P7（新ブロック・ロバスト化）は受領・検収済みだが全候補不採用。**第一目標 Valid +1.2 は達成**、第二目標 +1.5 は未達。
-  P8（学習型合成 `blend_learning`・線形成分 `ensemble_weights.linear`）も受領・検収済み。受領版が S5 コードベース
-  だったため P7 コードへ 3-way マージして反映（既定 OFF・v5 ビット一致）し、linear 5候補・blend 2候補を実測したが
-  **すべて Train OOS と Valid の両方で v5 を上回らず不採用**（blend blocks は OOS +2.3057 も Valid +1.1742）。
-  提出候補は v5（旧候補は v4/S5、旧暫定提出は v1）。詳細は `CHANGELOG_v5_size_pure.md` / `CHANGELOG_v5v6.md` と
-  `docs/baseline.md`。
+- **現状**: `strategies/v0_multifactor` に **v6 採用版**（v5 + 予測側の再配合: `sector_neutral: false` /
+  `block_weights` quality↑(0.9)・size_pure↓(1.8)・value↓(0.3)・lowrisk 0 / `model_weight 0.15` /
+  ridge 0.4。コード変更なし・config のみ）。実測 **Train OOS +2.4560 / Valid +1.3783 / Valid 回転率 0.0130
+  （コスト 0.33%/年）**。2020 が −0.84 → +0.35 に改善。**第一目標 Valid +1.2 は達成**、第二目標 +1.5 は未達。
+  P7（新ブロック・ロバスト化）は受領・検収済みだが全候補不採用。P8（学習型合成 `blend_learning`・線形成分
+  `ensemble_weights.linear`）も受領・検収済み（既定 OFF・v5 ビット一致のまま保持、全候補不採用）。
+  提出候補は v6（旧候補は v5 / v4/S5 / 旧暫定提出は v1）。詳細は `CHANGELOG_v6_quality_tilt.md` /
+  `CHANGELOG_v5_size_pure.md` / `CHANGELOG_v5v6.md` と `docs/baseline.md`。
 
 ## 2. ファイルマップ
 
@@ -43,7 +42,7 @@
 | `tools/profile_data.py` | `docs/data_schema.md` 生成（target 定義の検算つき） |
 | `tools/make_zip.py` | 提出 zip 作成（create_zip.ipynb と同一ルール）+ zip で採点 |
 | `tools/progress.py` | Progress（JSONL + STATE.md）。長時間処理の共通規約 |
-| `strategies/v0_multifactor/` | v1 の全ファイル + `alpha.py`（walkforward API のラッパー）+ `walkforward_config.json`。v2 以降: `alpha_features.py` / `alpha_v2.py` / `submission.py` / `train_v2.py`。P5 追加: `ensemble.py` / `slowdown.py` / `regime_v4.py` / `selftest_p5.py` / `bench_p5.py`。P7 追加: `selftest_p7.py` / `selftest_p7_pipeline.py` / `bench_p7.py` / `CHANGELOG_v4v5.md` / `REPORT_P7.md`。v5: `CHANGELOG_v5_size_pure.md`（config のみの変更）。P8 追加: `blend.py` / `selftest_p8.py` / `CHANGELOG_v5v6.md` / `REPORT_P8.md`（既定 OFF。v0 受領版は S5 ベースのため現行コードへ 3-way マージ済み） |
+| `strategies/v0_multifactor/` | v1 の全ファイル + `alpha.py`（walkforward API のラッパー）+ `walkforward_config.json`。v2 以降: `alpha_features.py` / `alpha_v2.py` / `submission.py` / `train_v2.py`。P5 追加: `ensemble.py` / `slowdown.py` / `regime_v4.py` / `selftest_p5.py` / `bench_p5.py`。P7 追加: `selftest_p7.py` / `selftest_p7_pipeline.py` / `bench_p7.py` / `CHANGELOG_v4v5.md` / `REPORT_P7.md`。v5: `CHANGELOG_v5_size_pure.md`（config のみの変更）。P8 追加: `blend.py` / `selftest_p8.py` / `CHANGELOG_v5v6.md` / `REPORT_P8.md`（既定 OFF。v0 受領版は S5 ベースのため現行コードへ 3-way マージ済み）。v6: `CHANGELOG_v6_quality_tilt.md`（config のみの変更） |
 | `requirements.txt` / `evaluate_script.py` / `input/` / `input_manifest.json` | 配布物（`evaluate_script.py` / `input/` / `input_manifest.json` は触らない。`requirements.txt` は lightgbm のみ実採点環境に合わせ 4.1.0 へ修正済み） |
 
 ## 3. 外部サービスの仕様（確定事項・再調査しないこと）
@@ -117,5 +116,12 @@
    linear 5候補が OOS +2.2402〜+2.2837、blend blocks が OOS **+2.3057** / Valid **+1.1742**、
    blend ensemble+model が OOS +2.1807 → すべて不採用。v5 復元後に Valid +1.2150 を再現。
    実測 JSON は `work/reports/improve4_*.json`。**提出候補は v5 のまま**（zip 作成済み・再作成不要）。
-7. push / 提出 zip 作成はユーザーの明示指示があった場合のみ実行する。
+7. **v6 採用（2026-10-05、ローカル: 予測側の再配合）**: P9 のテーマ選定前に v5 の成分別診断
+   （`work/diag_v5.py`、成分は `work/sweep_improve2/` を v5 config で再生成）を行い、予測側パラメータを
+   `work/search_v5_diag*.py` で 214 候補探索 → 最良 OOS を直接パイプラインで確認。
+   `sector_neutral false` / quality 0.9 / size_pure 1.8 / value 0.3 / lowrisk 0 / model_weight 0.15 / ridge 0.4 で
+   **Train OOS +2.4560 / Valid +1.3783 / 回転率 0.0130**（2020 −0.84 → +0.35）。コード変更なし・config のみ。
+   詳細は `CHANGELOG_v6_quality_tilt.md`、実測は `work/reports/direct_v6a_q09_lr0_*.json`。**提出 zip は要再作成**
+   （ユーザー指示時: `python tools/make_zip.py --name v0_multifactor --score`）。
+8. push / 提出 zip 作成はユーザーの明示指示があった場合のみ実行する。
 
