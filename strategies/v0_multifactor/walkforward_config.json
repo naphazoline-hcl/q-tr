@@ -15,8 +15,8 @@
     "model_features": "v1",
     "drop_features": [],
     "horizon_combine": "z",
-    "model_weight": 0.15,
-    "model_smoothing_span": 20,
+    "model_weight": 0.1,
+    "model_smoothing_span": 10,
     "sector_neutral": false,
     "sector_weight": 0.5,
     "block_set": "v1",
@@ -50,7 +50,7 @@
       "n_jobs": -1,
       "verbose": -1
     },
-    "ensemble_weights": {"lgbm": 1.0, "ridge": 0.4, "rank": 0.0},
+    "ensemble_weights": {"lgbm": 1.0, "ridge": 0.0, "rank": 0.0},
     "ridge": {"alpha": 10.0, "label_demean": true, "blocks": null},
     "rank_model": {
       "objective": "lambdarank",

@@ -13,14 +13,15 @@
   v0 は 1 セッション 1〜3 メッセージ、1 メッセージ 25 分、fast モード対応。
   v0 は入力データを持たない前提で、実行・計測はローカルで行う。
 - **環境**: `.venv`（Python 3.13 + 配布固定 5 パッケージ。配布要件は 3.11 だがバージョン同一のため等価。ただし lightgbm は実採点環境に合わせ **4.1.0**）。
-- **現状**: `strategies/v0_multifactor` に **v6 採用版**（v5 + 予測側の再配合: `sector_neutral: false` /
-  `block_weights` quality↑(0.9)・size_pure↓(1.8)・value↓(0.3)・lowrisk 0 / `model_weight 0.15` /
-  ridge 0.4。コード変更なし・config のみ）。実測 **Train OOS +2.4560 / Valid +1.3783 / Valid 回転率 0.0130
-  （コスト 0.33%/年）**。2020 が −0.84 → +0.35 に改善。**第一目標 Valid +1.2 は達成**、第二目標 +1.5 は未達。
+- **現状**: `strategies/v0_multifactor` に **v7 採用版**（v6 + モデル項の再構成: `ensemble_weights.ridge 0` /
+  `model_weight 0.10` / `model_smoothing_span 10`。コード変更なし・config のみ）。実測
+  **Train OOS +2.4667 / Valid +1.3989 / Valid 回転率 0.0135（コスト 0.34%/年）**。
+  v6 は予測側再配合（`sector_neutral false` / quality 0.9 / size_pure 1.8 / value 0.3 / lowrisk 0。
+  Train +2.4560 / Valid +1.3783）。**第一目標 Valid +1.2 は達成**、第二目標 +1.5 は未達。
   P7（新ブロック・ロバスト化）は受領・検収済みだが全候補不採用。P8（学習型合成 `blend_learning`・線形成分
   `ensemble_weights.linear`）も受領・検収済み（既定 OFF・v5 ビット一致のまま保持、全候補不採用）。
-  提出候補は v6（旧候補は v5 / v4/S5 / 旧暫定提出は v1）。詳細は `CHANGELOG_v6_quality_tilt.md` /
-  `CHANGELOG_v5_size_pure.md` / `CHANGELOG_v5v6.md` と `docs/baseline.md`。
+  提出候補は v7（旧候補は v6 / v5 / v4/S5 / 旧暫定提出は v1）。詳細は `CHANGELOG_v7_lgbm_only.md` /
+  `CHANGELOG_v6_quality_tilt.md` / `CHANGELOG_v5v6.md` と `docs/baseline.md`。
 
 ## 2. ファイルマップ
 
@@ -42,7 +43,7 @@
 | `tools/profile_data.py` | `docs/data_schema.md` 生成（target 定義の検算つき） |
 | `tools/make_zip.py` | 提出 zip 作成（create_zip.ipynb と同一ルール）+ zip で採点 |
 | `tools/progress.py` | Progress（JSONL + STATE.md）。長時間処理の共通規約 |
-| `strategies/v0_multifactor/` | v1 の全ファイル + `alpha.py`（walkforward API のラッパー）+ `walkforward_config.json`。v2 以降: `alpha_features.py` / `alpha_v2.py` / `submission.py` / `train_v2.py`。P5 追加: `ensemble.py` / `slowdown.py` / `regime_v4.py` / `selftest_p5.py` / `bench_p5.py`。P7 追加: `selftest_p7.py` / `selftest_p7_pipeline.py` / `bench_p7.py` / `CHANGELOG_v4v5.md` / `REPORT_P7.md`。v5: `CHANGELOG_v5_size_pure.md`（config のみの変更）。P8 追加: `blend.py` / `selftest_p8.py` / `CHANGELOG_v5v6.md` / `REPORT_P8.md`（既定 OFF。v0 受領版は S5 ベースのため現行コードへ 3-way マージ済み）。v6: `CHANGELOG_v6_quality_tilt.md`（config のみの変更） |
+| `strategies/v0_multifactor/` | v1 の全ファイル + `alpha.py`（walkforward API のラッパー）+ `walkforward_config.json`。v2 以降: `alpha_features.py` / `alpha_v2.py` / `submission.py` / `train_v2.py`。P5 追加: `ensemble.py` / `slowdown.py` / `regime_v4.py` / `selftest_p5.py` / `bench_p5.py`。P7 追加: `selftest_p7.py` / `selftest_p7_pipeline.py` / `bench_p7.py` / `CHANGELOG_v4v5.md` / `REPORT_P7.md`。v5: `CHANGELOG_v5_size_pure.md`（config のみの変更）。P8 追加: `blend.py` / `selftest_p8.py` / `CHANGELOG_v5v6.md` / `REPORT_P8.md`（既定 OFF。v0 受領版は S5 ベースのため現行コードへ 3-way マージ済み）。v6: `CHANGELOG_v6_quality_tilt.md`（config のみの変更）。v7: `CHANGELOG_v7_lgbm_only.md`（config のみの変更） |
 | `requirements.txt` / `evaluate_script.py` / `input/` / `input_manifest.json` | 配布物（`evaluate_script.py` / `input/` / `input_manifest.json` は触らない。`requirements.txt` は lightgbm のみ実採点環境に合わせ 4.1.0 へ修正済み） |
 
 ## 3. 外部サービスの仕様（確定事項・再調査しないこと）
@@ -123,5 +124,10 @@
    **Train OOS +2.4560 / Valid +1.3783 / 回転率 0.0130**（2020 −0.84 → +0.35）。コード変更なし・config のみ。
    詳細は `CHANGELOG_v6_quality_tilt.md`、実測は `work/reports/direct_v6a_q09_lr0_*.json`。**提出 zip は要再作成**
    （ユーザー指示時: `python tools/make_zip.py --name v0_multifactor --score`）。
-8. push / 提出 zip 作成はユーザーの明示指示があった場合のみ実行する。
+8. **v7 採用（2026-10-05、ローカル: モデル項の再構成）**: v6 後の探索（短期ラベル・全特徴量・ブロック定義
+   拡充・LGBM 容量増）はすべて不採用。モデル項を LGBM / Ridge に分解した 144 候補の再合成評価で
+   「ridge 0 / model_weight 0.10 / span 10」が最良となり、直接パイプラインで
+   **Train OOS +2.4667 / Valid +1.3989 / 回転率 0.0135** を確認（改善幅は小さい。OOS +0.011 / Valid +0.021）。
+   詳細は `CHANGELOG_v7_lgbm_only.md`、実測は `work/reports/v7b_lgbmonly_*.json`。**提出 zip は要再作成**。
+9. push / 提出 zip 作成はユーザーの明示指示があった場合のみ実行する。
 

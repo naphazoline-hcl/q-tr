@@ -1,7 +1,7 @@
 {
   "strategy": "v0_multifactor",
   "version": "alpha_v2",
-  "created_at": "2026-10-05 09:47:22",
+  "created_at": "2026-10-05 11:11:17",
   "model_dir": "models_v2",
   "model_files": [
     "lgbm_k126_s0.txt",
@@ -115,7 +115,7 @@
   "label_transform": "raw",
   "label_min_frac": 0.5,
   "smoothing_span": 5,
-  "model_weight": 0.15,
+  "model_weight": 0.1,
   "horizon_combine": "z",
   "sector_neutral": false,
   "sector_weight": 0.5,
@@ -166,8 +166,8 @@
     "model_features": "v1",
     "drop_features": [],
     "horizon_combine": "z",
-    "model_weight": 0.15,
-    "model_smoothing_span": 20,
+    "model_weight": 0.1,
+    "model_smoothing_span": 10,
     "sector_neutral": false,
     "sector_weight": 0.5,
     "block_set": "v1",
@@ -233,7 +233,7 @@
     },
     "ensemble_weights": {
       "lgbm": 1.0,
-      "ridge": 0.4,
+      "ridge": 0.0,
       "rank": 0.0,
       "linear": 0.0
     },
@@ -333,69 +333,18 @@
   },
   "skipped": {},
   "history_start": "2004-01-01",
-  "config_sha256_16": "c2be8739f96eb711",
+  "config_sha256_16": "173b2e633003ed49",
   "versions": {
     "lightgbm": "4.1.0",
     "pandas": "3.0.3"
   },
   "ensemble_weights": {
     "lgbm": 1.0,
-    "ridge": 0.4,
+    "ridge": 0.0,
     "rank": 0.0,
     "linear": 0.0
   },
-  "ridge": {
-    "columns": [
-      "size_pure",
-      "value",
-      "quality",
-      "lowrisk"
-    ],
-    "coef": {
-      "k126": [
-        0.0002614796200681833,
-        -4.8070097204638414e-05,
-        0.00012905212727797882,
-        4.007753275024808e-05
-      ],
-      "k250": [
-        0.00026305738394261763,
-        -6.630678360925249e-05,
-        8.851710516625013e-05,
-        7.550505969557767e-05
-      ]
-    },
-    "intercept": {
-      "k126": 0.0,
-      "k250": 0.0
-    },
-    "rows": {
-      "k126": 748595,
-      "k250": 692164
-    },
-    "blocks": {
-      "size_pure": {
-        "logsize": -1.0
-      },
-      "value": {
-        "bp": 1.0,
-        "sp": 1.0,
-        "ep_f": 1.0,
-        "ep_a": 1.0,
-        "cfy": 1.0,
-        "div_y": 1.0
-      },
-      "quality": {
-        "roe": 1.0,
-        "cfo_ta": 1.0,
-        "eq_ratio": 1.0
-      },
-      "lowrisk": {
-        "beta": -1.0,
-        "vol60": -1.0
-      }
-    }
-  },
+  "ridge": null,
   "rank_models": [],
   "regime_v4": {
     "vol_threshold": 0.010196659527719022
